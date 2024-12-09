@@ -1,4 +1,4 @@
-TAG?=v0.1
+TAG?=v0.1.0
 DATE?=$(shell date +%Y-%m-%d-%H:%M:%S)
 COMMIT?=$(shell git rev-parse HEAD)
 LDFLAGS=-ldflags "-s -w -X main.version=$(TAG) -X main.commit=$(COMMIT) -X main.date=$(DATE)"
