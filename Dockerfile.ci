@@ -1,0 +1,7 @@
+FROM gcr.io/distroless/static-debian11  
+
+COPY blockchain-wallet-exporter .
+
+EXPOSE 9091
+
+CMD ["/blockchain-wallet-exporter"]

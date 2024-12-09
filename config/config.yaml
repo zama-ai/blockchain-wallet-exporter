@@ -1,0 +1,69 @@
+global:
+  environment: development
+  metricsAddr: ":9091"
+  logLevel: debug
+  
+  # TODO: support allow failure mode
+  #allowFailure: true
+
+  #ssl:
+  #  enabled: false
+  #  certFile: ""
+  #  keyFile: ""
+
+
+
+# 4 connector
+# 1 validator
+# 1 gateway (fhevm)
+# 1 gateway (kms)
+
+nodes:
+  - name: kms-1
+    module: cosmos
+    grpcAddr: "grpc://127.0.0.1:9090"
+    #grpcAddress: "grpcs://127.0.0.1:9090" with SSL enabled
+    grpcSSLVerify: false
+    unit: ucosm
+    accounts:
+      - address: "wasm13fqxze7dasetlyfsmt2vtpe623temrvewwkx4e"
+        name: wasm-1
+    labels:
+      app: kms-blockchain
+      env: test
+    #authorization:
+    #  username: "kms"
+    #  password: "kms"
+  - name: gateway
+    module: evm
+    httpAddr: "https://ethereum-mainnet.rpc.starton.com"
+    unit: eth
+    httpSSLVerify: false
+    #authorization:
+    #  username: "kms"
+    #  password: "kms"
+    accounts:
+      - address: "0xaF3960e040591bea674677dF567c649258962c22"
+        name: fhevm-1
+      - address: "0x1BF621Aa9ceE3F6154881c25041bB39AEd4ca7Cc"
+        name: fhevm-2
+
+      # Demo with invalid address
+      #- address: "0xc361fc33b99F88612257ac8cc2D852A5CEe0E217"
+      #  name: invalid-address
+
+    labels:
+      app: gateway-fhevm
+      env: test
+  #- name: gateway
+  #  module: evm
+  #  httpAddr: "https://ethereum-mainnet.rpc.starton.com"
+  #  httpSSLVerify: false
+  #  accounts:
+  #    - address: "0xaF3960e040591bea674677dF567c649258962c22"
+  #      name: fhevm-1
+  #    - address: "0x1BF621Aa9ceE3F6154881c25041bB39AEd4ca7Cc"
+  #      name: fhevm-2
+  #  labels:
+  #    app: gateway-fhevm
+  #    env: test

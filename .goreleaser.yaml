@@ -1,0 +1,97 @@
+#Release v0.1.0
+
+version: 2
+env:
+  - DOCKERFILE_BLOCKCHAIN_WALLET_EXPORTER=./Dockerfile.ci
+
+archives:
+  - id: archive1
+    builds: [ blockchain-wallet-exporter ]
+    name_template: '{{ .Binary }}-{{ .Tag }}-{{ .Os }}-{{ .Arch }}'
+before:
+  hooks:
+builds:
+  - binary: blockchain-wallet-exporter
+    id: blockchain-wallet-exporter
+    dir: ./cmd
+    env:
+      - CGO_ENABLED=0
+    goarch:
+      - amd64
+      - arm64
+    goos:
+      - darwin
+      - linux
+    ldflags:
+      # The line below MUST align with the module in current provider/go.mod
+      - -X main.buildVersion={{ .Tag }} -X main.commit={{ .FullCommit }} -X main.date={{ .Date }}
+    main: main.go
+
+dockers:
+  ##############
+  #  blockchain-wallet-exporter
+  ##############
+  - goos: linux
+    ids:
+      - blockchain-wallet-exporter
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/starton-io/blockchain-wallet-exporter:{{ .Tag }}-amd64"
+    use: buildx
+    dockerfile: "{{ .Env.DOCKERFILE_BLOCKCHAIN_WALLET_EXPORTER }}"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.description={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+
+      
+  - goos: linux
+    goarch: arm64
+    ids:
+      - blockchain-wallet-exporter
+    image_templates:
+      - "ghcr.io/starton-io/blockchain-wallet-exporter:{{ .Tag }}-arm64"
+    use: buildx
+    dockerfile: "{{ .Env.DOCKERFILE_BLOCKCHAIN_WALLET_EXPORTER }}"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.description={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+
+
+checksum:
+  extra_files:
+    ##############
+    #  blockchain-wallet-exporter
+    ##############
+    - glob: dist/blockchain-wallet-exporter_linux_arm64/blockchain-wallet-exporter
+      name_template: blockchain-wallet-exporter_linux_arm64
+    - glob: dist/blockchain-wallet-exporter_linux_amd64_v1/blockchain-wallet-exporter
+      name_template: blockchain-wallet-exporter_linux_amd64_v1
+    - glob: dist/blockchain-wallet-exporter_darwin_arm64/blockchain-wallet-exporter
+      name_template: blockchain-wallet-exporter_darwin_arm64 
+    - glob: dist/blockchain-wallet-exporter_darwin_amd64_v1/blockchain-wallet-exporter
+      name_template: blockchain-wallet-exporter_darwin_amd64_v1
+
+changelog:
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "Bug fixes"
+      regexp: '^.*?bug(\([[:word:]]+\))??!?:.+$'
+      order: 1
+  #filters:
+  #  include:
+  #    - "^feat:"
+  #    - "^chore:"
+release:
+  disable: false
+  prerelease: auto
+snapshot:
+  name_template: '{{ .Tag }}-SNAPSHOT'

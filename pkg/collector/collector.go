@@ -1,0 +1,194 @@
+package collector
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/carlmjohnson/flowmatic"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
+	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
+	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
+)
+
+const (
+	DefaultMaxConcurrency = 10
+)
+
+type Module string
+
+const (
+	Cosmos Module = "cosmos"
+	EVM    Module = "evm"
+)
+
+var ModuleNames = map[string]Module{
+	"cosmos": Cosmos,
+	"evm":    EVM,
+}
+
+type BaseResult struct {
+	NodeName string
+	Account  config.Account
+	Value    float64
+	Health   float64
+}
+
+// BaseCollector provides enhanced common functionality for all collectors
+type BaseCollector struct {
+	nodeName     string
+	module       Module
+	metrics      *prometheus.GaugeVec
+	health       *prometheus.GaugeVec
+	processor    IModuleCollector
+	timeout      time.Duration
+	unit         *currency.Unit
+	retryCount   int
+	accounts     []*config.Account
+	labels       map[string]string
+	collectMutex sync.Mutex
+}
+
+type PrometheusCollector interface {
+	prometheus.Collector
+	IModuleCollector
+}
+
+// CollectorOption defines functional options for BaseCollector
+type CollectorOption func(*BaseCollector)
+
+// WithCollectorTimeout sets the timeout for collection operations
+func WithCollectorTimeout(timeout time.Duration) CollectorOption {
+	return func(c *BaseCollector) {
+		c.timeout = timeout
+	}
+}
+
+// IModuleCollector defines the simplified interface for specific blockchain module collectors
+type IModuleCollector interface {
+	// CollectAccountBalance collects balance for a single account
+	CollectAccountBalance(ctx context.Context, account *config.Account) (*BaseResult, error)
+	Close() error
+}
+
+func NewBaseCollector(node config.Node, processor IModuleCollector, opts ...CollectorOption) prometheus.Collector {
+	collector := &BaseCollector{
+		nodeName:   node.Name,
+		module:     ModuleNames[node.Module],
+		processor:  processor,
+		timeout:    10 * time.Second, // Default timeout
+		retryCount: 2,                // Default retry count
+		unit:       node.Unit,
+		accounts:   node.Accounts,
+		labels:     node.Labels,
+		metrics: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name:        "blockchain_wallet_balance",
+				Help:        "Balance for blockchain wallets",
+				ConstLabels: node.Labels,
+			},
+			[]string{"module", "address", "node_name", "account_name", "symbol"},
+		),
+		health: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name:        "blockchain_wallet_health",
+				Help:        "Health for blockchain wallets",
+				ConstLabels: node.Labels,
+			},
+			[]string{"module", "address", "node_name", "account_name"},
+		),
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(collector)
+	}
+
+	return collector
+}
+
+// collectMetrics handles the concurrent collection of metrics with retry logic
+func (c *BaseCollector) collectMetrics() []*BaseResult {
+	results := make([]*BaseResult, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
+
+	var resultsMutex sync.Mutex
+
+	err := flowmatic.Each(DefaultMaxConcurrency, c.accounts, func(account *config.Account) error {
+		var result *BaseResult
+		var err error
+
+		result, err = c.processor.CollectAccountBalance(ctx, account)
+		resultsMutex.Lock()
+
+		// only log error
+		if err != nil {
+			result = &BaseResult{
+				NodeName: c.nodeName,
+				Account:  *account,
+				Health:   0,
+			}
+			logger.Errorf("failed to collect metrics for account %s after %d attempts: %w",
+				account.Address, c.retryCount+1, err)
+		}
+
+		// Thread-safe results append
+		results = append(results, result)
+		resultsMutex.Unlock()
+
+		return nil
+	})
+
+	if err != nil {
+		logger.Errorf("error collecting metrics: %v", err)
+	}
+
+	return results
+}
+
+// Implement prometheus.Collector interface
+func (c *BaseCollector) Describe(ch chan<- *prometheus.Desc) {
+	c.metrics.Describe(ch)
+	c.health.Describe(ch)
+}
+
+func (c *BaseCollector) Collect(ch chan<- prometheus.Metric) {
+	c.collectMutex.Lock()
+	defer c.collectMutex.Unlock()
+
+	metrics := c.collectMetrics()
+
+	for _, result := range metrics {
+		logger.Infof("%s: %f", string(c.module), result.Health)
+
+		labels := prometheus.Labels{
+			"module":       string(c.module),
+			"address":      result.Account.Address,
+			"node_name":    result.NodeName,
+			"account_name": result.Account.Name,
+		}
+
+		c.health.With(labels).Set(result.Health)
+		c.health.Collect(ch)
+		c.health.Reset()
+
+		logger.Infof("Collecting metric with labels: %v", labels)
+		if result.Health > 0 {
+			labels["symbol"] = c.unit.Symbol
+			c.metrics.With(labels).Set(result.Value)
+			c.metrics.Collect(ch)
+			c.metrics.Reset()
+		}
+	}
+}
+
+func (c *BaseCollector) Name() string {
+	return string(c.module)
+}
+
+// Close implements proper cleanup
+func (c *BaseCollector) Close() error {
+	return c.processor.Close()
+}
