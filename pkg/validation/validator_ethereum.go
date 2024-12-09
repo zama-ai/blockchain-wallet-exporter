@@ -100,10 +100,10 @@ func (v *EthereumValidator) validateUnit(node *config.Node) ValidationErrors {
 
 	// Validate that the unit is either ETH or WEI
 	unit := node.Unit.Name
-	if unit != currency.DefaultETH.Name && unit != currency.DefaultWEI.Name {
+	if unit != currency.DefaultETH.Name && unit != currency.DefaultWEI.Name && unit != currency.DefaultGWEI.Name {
 		errors = append(errors, ValidationError{
 			Field:   "unit",
-			Message: "unit must be either ETH or WEI for Ethereum chains",
+			Message: "unit must be either ETH, WEI or GWEI for Ethereum chains",
 		})
 	}
 

@@ -24,6 +24,7 @@ nodes:
     grpcAddr: "grpc://127.0.0.1:9090"
     #grpcAddress: "grpcs://127.0.0.1:9090" with SSL enabled
     grpcSSLVerify: false
+    # unit can be ucosm, cosm
     unit: ucosm
     accounts:
       - address: "wasm13fqxze7dasetlyfsmt2vtpe623temrvewwkx4e"
@@ -37,7 +38,8 @@ nodes:
   - name: gateway
     module: evm
     httpAddr: "https://ethereum-mainnet.rpc.starton.com"
-    unit: eth
+    # unit can be wei, gwei, eth
+    unit: gwei
     httpSSLVerify: false
     #authorization:
     #  username: "kms"
