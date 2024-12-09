@@ -1,0 +1,26 @@
+version: '3.2'
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+    - 9090:9090
+    command:
+    - --config.file=/etc/prometheus.yaml
+    volumes:
+    - ./config/prometheus.yaml:/etc/prometheus.yaml:ro
+  blockchain-wallet-exporter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        ARCH: ${ARCH:-amd64}
+        OS: ${OS:-linux}
+    container_name: blockchain-wallet-exporter
+    ports:
+    - 9091:9091
+    volumes:
+    - ./config/config.yaml:/config.yaml:ro
+    command: 
+    - -config
+    - /config.yaml
