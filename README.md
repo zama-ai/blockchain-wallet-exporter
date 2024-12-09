@@ -9,7 +9,7 @@ The Blockchain Wallet Exporter is a tool designed to retrieve and export wallet 
 - **Minimalistic Design**: Focused on essential functionalities to keep the tool lightweight.
 - **Multi-Blockchain Support**: Currently supports Cosmos and Ethereum blockchains.
 - **Concurrent Balance Retrieval**: Utilizes a worker pool to fetch balances for multiple wallets concurrently.
-- **Flexible Unit Selection**: Allows balance retrieval in different units (e.g., wei or eth for Ethereum, ucosm for Cosmos).
+- **Flexible Unit Selection**: Allows balance retrieval in different units (e.g., wei, gwei, eth for Ethereum, and ucosm, cosm for Cosmos).
 - **Prometheus Integration**: Exports metrics in a format compatible with Prometheus.
 - **Manual Wallet Configuration**: Wallets need to be manually configured as auto-discovery is not supported.
 
@@ -42,7 +42,8 @@ nodes:
     module: cosmos
     grpcAddr: "grpc://127.0.0.1:9090"
     grpcSSLVerify: false
-    unit: ucosm
+    # unit can be ucosm, cosm
+    unit: ucosm # default unit is ucosm for cosmos
     accounts:
       - address: "wasm..."
         name: wasm-1
@@ -56,7 +57,8 @@ nodes:
     module: evm
     httpAddr: "http://127.0.0.1:8545"
     httpSSLVerify: false
-    unit: eth
+    # unit can be wei, gwei, eth
+    unit: wei # default unit is wei for ethereum
     accounts:
       - address: "0x02933E8678FE8F5D4CFFD0E331A264CD86AEBD8A"
         name: eth-2

@@ -28,7 +28,16 @@ var (
 		Decimals:     18,
 		ChainType:    "evm",
 		Description:  "Ethereum",
-		ConversionTo: map[string]float64{"WEI": 1e18},
+		ConversionTo: map[string]float64{"WEI": 1e18, "GWEI": 1e9},
+	}
+
+	DefaultGWEI = &Unit{
+		Name:         "GWEI",
+		Symbol:       "GWEI",
+		Decimals:     9,
+		ChainType:    "evm",
+		Description:  "Gwei",
+		ConversionTo: map[string]float64{"ETH": 1e-9, "WEI": 1e9},
 	}
 
 	DefaultWEI = &Unit{
@@ -37,7 +46,7 @@ var (
 		Decimals:     0,
 		ChainType:    "evm",
 		Description:  "Wei (smallest Ethereum unit)",
-		ConversionTo: map[string]float64{"ETH": 1e-18},
+		ConversionTo: map[string]float64{"ETH": 1e-18, "GWEI": 1e-9},
 	}
 
 	DefaultCOSM = &Unit{
@@ -46,7 +55,7 @@ var (
 		Decimals:     6,
 		ChainType:    "cosmos",
 		Description:  "Cosmos USD",
-		ConversionTo: map[string]float64{"UCOSM": 1e-6},
+		ConversionTo: map[string]float64{"UCOSM": 1e6},
 	}
 
 	DefaultUCOSM = &Unit{
@@ -165,6 +174,7 @@ func NewDefaultRegistry() *Registry {
 	r := NewRegistry()
 	r.MustRegister(DefaultETH)
 	r.MustRegister(DefaultWEI)
+	r.MustRegister(DefaultGWEI)
 	r.MustRegister(DefaultCOSM)
 	r.MustRegister(DefaultUCOSM)
 	return r
