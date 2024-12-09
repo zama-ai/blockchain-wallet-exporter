@@ -67,14 +67,14 @@ checksum:
     ##############
     #  blockchain-wallet-exporter
     ##############
-    - glob: dist/blockchain-wallet-exporter_linux_arm64/blockchain-wallet-exporter
+    - glob: "dist/blockchain-wallet-exporter_linux_arm64*/blockchain-wallet-exporter"
       name_template: blockchain-wallet-exporter_linux_arm64
-    - glob: dist/blockchain-wallet-exporter_linux_amd64_v1/blockchain-wallet-exporter
-      name_template: blockchain-wallet-exporter_linux_amd64_v1
-    - glob: dist/blockchain-wallet-exporter_darwin_arm64/blockchain-wallet-exporter
+    - glob: "dist/blockchain-wallet-exporter_linux_amd64*/blockchain-wallet-exporter"
+      name_template: blockchain-wallet-exporter_linux_amd64
+    - glob: "dist/blockchain-wallet-exporter_darwin_arm64*/blockchain-wallet-exporter"
       name_template: blockchain-wallet-exporter_darwin_arm64 
-    - glob: dist/blockchain-wallet-exporter_darwin_amd64_v1/blockchain-wallet-exporter
-      name_template: blockchain-wallet-exporter_darwin_amd64_v1
+    - glob: "dist/blockchain-wallet-exporter_darwin_amd64*/blockchain-wallet-exporter"
+      name_template: blockchain-wallet-exporter_darwin_amd64
 
 changelog:
   groups:
