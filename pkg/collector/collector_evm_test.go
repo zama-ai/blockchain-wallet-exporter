@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
@@ -70,6 +71,7 @@ func TestEVMCollector_CollectAccountBalance(t *testing.T) {
 		name           string
 		nodeConfig     config.Node
 		account        *config.Account
+		labels         prometheus.Labels
 		expectedValue  float64
 		expectedHealth float64
 		expectError    bool
@@ -83,6 +85,7 @@ func TestEVMCollector_CollectAccountBalance(t *testing.T) {
 				Unit:          currencyRegistry.MustGet("ETH"),
 				HttpSSLVerify: "true",
 				Authorization: nil,
+				Labels:        prometheus.Labels{"app": "test-eth-node"},
 			},
 			account: &config.Account{
 				Name:    "test-account",
@@ -101,6 +104,7 @@ func TestEVMCollector_CollectAccountBalance(t *testing.T) {
 				Unit:          currencyRegistry.MustGet("WEI"),
 				HttpSSLVerify: "true",
 				Authorization: nil,
+				Labels:        prometheus.Labels{"app": "test-eth-node"},
 			},
 			account: &config.Account{
 				Name:    "test-account",

@@ -44,7 +44,6 @@ type BaseCollector struct {
 	processor    IModuleCollector
 	timeout      time.Duration
 	unit         *currency.Unit
-	retryCount   int
 	accounts     []*config.Account
 	labels       map[string]string
 	collectMutex sync.Mutex
@@ -73,30 +72,43 @@ type IModuleCollector interface {
 }
 
 func NewBaseCollector(node config.Node, processor IModuleCollector, opts ...CollectorOption) prometheus.Collector {
+	var (
+		constLabels prometheus.Labels
+	)
+
+	if node.Labels != nil {
+		constLabels = node.Labels
+	}
+
+	// append nodename and module to constLabels in order to have a unique identifier for the metrics
+	constLabels["node_name"] = node.Name
+	constLabels["module"] = string(ModuleNames[node.Module])
+	constLabelsHealth := constLabels
+	constLabels["symbol"] = node.Unit.Symbol
+
 	collector := &BaseCollector{
-		nodeName:   node.Name,
-		module:     ModuleNames[node.Module],
-		processor:  processor,
-		timeout:    10 * time.Second, // Default timeout
-		retryCount: 2,                // Default retry count
-		unit:       node.Unit,
-		accounts:   node.Accounts,
-		labels:     node.Labels,
+		nodeName:  node.Name,
+		module:    ModuleNames[node.Module],
+		processor: processor,
+		timeout:   10 * time.Second, // Default timeout
+		unit:      node.Unit,
+		accounts:  node.Accounts,
+		labels:    node.Labels,
 		metrics: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name:        "blockchain_wallet_balance",
 				Help:        "Balance for blockchain wallets",
-				ConstLabels: node.Labels,
+				ConstLabels: constLabels,
 			},
-			[]string{"module", "address", "node_name", "account_name", "symbol"},
+			[]string{"address", "account_name"},
 		),
 		health: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name:        "blockchain_wallet_health",
 				Help:        "Health for blockchain wallets",
-				ConstLabels: node.Labels,
+				ConstLabels: constLabelsHealth,
 			},
-			[]string{"module", "address", "node_name", "account_name"},
+			[]string{"address", "account_name"},
 		),
 	}
 
@@ -130,8 +142,6 @@ func (c *BaseCollector) collectMetrics() []*BaseResult {
 				Account:  *account,
 				Health:   0,
 			}
-			logger.Errorf("failed to collect metrics for account %s after %d attempts: %w",
-				account.Address, c.retryCount+1, err)
 		}
 
 		// Thread-safe results append
@@ -164,9 +174,7 @@ func (c *BaseCollector) Collect(ch chan<- prometheus.Metric) {
 		logger.Infof("%s: %f", string(c.module), result.Health)
 
 		labels := prometheus.Labels{
-			"module":       string(c.module),
 			"address":      result.Account.Address,
-			"node_name":    result.NodeName,
 			"account_name": result.Account.Name,
 		}
 
@@ -176,7 +184,6 @@ func (c *BaseCollector) Collect(ch chan<- prometheus.Metric) {
 
 		logger.Infof("Collecting metric with labels: %v", labels)
 		if result.Health > 0 {
-			labels["symbol"] = c.unit.Symbol
 			c.metrics.With(labels).Set(result.Value)
 			c.metrics.Collect(ch)
 			c.metrics.Reset()

@@ -83,7 +83,7 @@ func (s *Server) InitCollectors() error {
 			}
 		case "cosmos":
 			logger.Infof("initializing cosmos collector for %s: %v", node.Name, node)
-			prometheusCollector, err = collector.NewCosmosCollector(node, collector.WithCosmosLabels(node.Labels))
+			prometheusCollector, err = collector.NewCosmosCollector(node, s.currencyRegistry, collector.WithCosmosLabels(node.Labels))
 			if err != nil {
 				return fmt.Errorf("failed to init cosmos collector: %v", err)
 			}

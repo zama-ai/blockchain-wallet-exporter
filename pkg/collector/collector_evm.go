@@ -82,7 +82,7 @@ func NewEVMCollector(nodeConfig config.Node, currencyRegistry *currency.Registry
 	), nil
 }
 
-// CollectAccountBalance implements IModuleCollectorV2 interface
+// CollectAccountBalance implements IModuleCollector interface
 func (ec *EVMCollector) CollectAccountBalance(ctx context.Context, account *config.Account) (*BaseResult, error) {
 	var converted float64
 	address := common.HexToAddress(account.Address)
@@ -94,8 +94,14 @@ func (ec *EVMCollector) CollectAccountBalance(ctx context.Context, account *conf
 
 	// Convert using currency package
 	amount := new(big.Float).SetInt(balance)
+
+	// check if amount is too large for float64
+	if amount.IsInf() {
+		return nil, fmt.Errorf("balance for %s too large for float64 representation", account.Address)
+	}
+
 	floatVal, _ := amount.Float64() // Extract just the float64 value
-	logger.Infof("balance for %s: %s (%f)", account.Address, balance.String(), floatVal)
+	logger.Debugf("balance for %s: %s (%f %s)", account.Address, balance.String(), floatVal, ec.unit.Symbol)
 
 	if ec.currencyRegistry != nil {
 		converted, err = ec.currencyRegistry.Convert(floatVal, "WEI", ec.unit.Name)
