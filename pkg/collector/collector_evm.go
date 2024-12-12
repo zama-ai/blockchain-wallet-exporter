@@ -24,6 +24,7 @@ type EVMCollector struct {
 	//accounts         []*config.Account
 	labels           map[string]string
 	unit             *currency.Unit
+	metricsUnit      *currency.Unit
 	currencyRegistry *currency.Registry
 }
 
@@ -42,7 +43,7 @@ func WithCurrencyRegistry(registry *currency.Registry) EVMCollectorOption {
 	}
 }
 
-func NewEVMCollector(nodeConfig config.Node, currencyRegistry *currency.Registry, opts ...EVMCollectorOption) (prometheus.Collector, error) {
+func NewEVMCollector(nodeConfig *config.Node, currencyRegistry *currency.Registry, opts ...EVMCollectorOption) (prometheus.Collector, error) {
 	// Configure TLS based on node configuration
 	tlsConfig := &tls.Config{InsecureSkipVerify: nodeConfig.HttpSSLVerify == "false"}
 	httpClient := &http.Client{
@@ -67,6 +68,7 @@ func NewEVMCollector(nodeConfig config.Node, currencyRegistry *currency.Registry
 		client:           ethclient.NewClient(rpcClient),
 		labels:           nodeConfig.Labels,
 		unit:             nodeConfig.Unit,
+		metricsUnit:      nodeConfig.MetricsUnit,
 		currencyRegistry: currencyRegistry,
 	}
 
@@ -78,11 +80,11 @@ func NewEVMCollector(nodeConfig config.Node, currencyRegistry *currency.Registry
 	return NewBaseCollector(
 		nodeConfig,
 		evmCollector,
-		WithCollectorTimeout(10*time.Second),
+		WithCollectorTimeout(5*time.Second),
 	), nil
 }
 
-// CollectAccountBalance implements IModuleCollectorV2 interface
+// CollectAccountBalance implements IModuleCollector interface
 func (ec *EVMCollector) CollectAccountBalance(ctx context.Context, account *config.Account) (*BaseResult, error) {
 	var converted float64
 	address := common.HexToAddress(account.Address)
@@ -94,11 +96,17 @@ func (ec *EVMCollector) CollectAccountBalance(ctx context.Context, account *conf
 
 	// Convert using currency package
 	amount := new(big.Float).SetInt(balance)
+
+	// check if amount is too large for float64
+	if amount.IsInf() {
+		return nil, fmt.Errorf("balance for %s too large for float64 representation", account.Address)
+	}
+
 	floatVal, _ := amount.Float64() // Extract just the float64 value
-	logger.Infof("balance for %s: %s (%f)", account.Address, balance.String(), floatVal)
+	logger.Debugf("balance for %s: %s (%f %s)", account.Address, balance.String(), floatVal, ec.unit.Symbol)
 
 	if ec.currencyRegistry != nil {
-		converted, err = ec.currencyRegistry.Convert(floatVal, "WEI", ec.unit.Name)
+		converted, err = ec.currencyRegistry.Convert(floatVal, ec.unit.Name, ec.metricsUnit.Name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert balance: %w", err)
 		}
@@ -106,7 +114,7 @@ func (ec *EVMCollector) CollectAccountBalance(ctx context.Context, account *conf
 		converted = floatVal
 	}
 
-	logger.Infof("balance for %s: %s (%f %s)", account.Address, balance.String(), converted, ec.unit.Symbol)
+	logger.Debugf("balance for %s: %s (%f %s)", account.Address, balance.String(), converted, ec.metricsUnit.Symbol)
 
 	return &BaseResult{
 		NodeName: ec.nodeName,

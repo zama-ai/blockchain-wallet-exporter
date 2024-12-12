@@ -5,13 +5,12 @@ import (
 	"io"
 
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
-	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
 	"gopkg.in/yaml.v2"
 )
 
 type Schema struct {
-	Global Global `yaml:"global"`
-	Nodes  []Node `yaml:"nodes"`
+	Global Global  `yaml:"global"`
+	Nodes  []*Node `yaml:"nodes"`
 }
 
 type Global struct {
@@ -35,12 +34,29 @@ type Node struct {
 	Module        string            `yaml:"module"`
 	GrpcAddr      string            `yaml:"grpcAddr"`
 	HttpAddr      string            `yaml:"httpAddr"`
+	MetricsUnit   *currency.Unit    `yaml:"metricsUnit"`
 	Unit          *currency.Unit    `yaml:"unit"`
 	HttpSSLVerify string            `yaml:"httpSSLVerify"`
 	GrpcSSLVerify string            `yaml:"grpcSSLVerify"`
 	Accounts      []*Account        `yaml:"accounts"`
 	Labels        map[string]string `yaml:"labels"`
 	Authorization *Authorization    `yaml:"authorization"`
+}
+
+func (s *Schema) Normalize() error {
+	for _, node := range s.Nodes {
+		if err := node.Normalize(); err != nil {
+			return fmt.Errorf("failed to normalize node %s: %w", node.Name, err)
+		}
+	}
+	return nil
+}
+
+func (n *Node) Normalize() error {
+	if n.MetricsUnit == nil {
+		n.MetricsUnit = n.Unit
+	}
+	return nil
 }
 
 type Authorization struct {
@@ -59,21 +75,14 @@ func NewConfig(path string) (*Schema, error) {
 	return cfg, nil
 }
 
-func ReadConfig(r io.Reader) *Schema {
-	config := &Schema{}
-	decoder := yaml.NewDecoder(r)
-	if err := decoder.Decode(&config); err != nil {
-		logger.Errorf("failed to decode config: %v", err)
-		return nil
-	}
-	return config
-}
-
 func ReadConfigWithError(r io.Reader) (*Schema, error) {
 	config := &Schema{}
 	decoder := yaml.NewDecoder(r)
 	if err := decoder.Decode(&config); err != nil {
 		return nil, fmt.Errorf("failed to decode config: %w", err)
+	}
+	if err := config.Normalize(); err != nil {
+		return nil, fmt.Errorf("failed to normalize config: %w", err)
 	}
 	return config, nil
 }

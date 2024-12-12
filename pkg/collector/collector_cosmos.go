@@ -3,8 +3,8 @@ package collector
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"net"
-	"strconv"
 	"strings"
 	"time"
 
@@ -19,12 +19,13 @@ import (
 
 // CosmosCollector implements the IModuleCollector interface for Cosmos chains
 type CosmosCollector struct {
-	nodeName string
-	conn     *grpc.ClientConn
-	client   banktypes.QueryClient
-	labels   map[string]string
-	unit     *currency.Unit
-	currency *currency.Registry
+	nodeName    string
+	conn        *grpc.ClientConn
+	client      banktypes.QueryClient
+	labels      map[string]string
+	unit        *currency.Unit
+	metricsUnit *currency.Unit
+	currency    *currency.Registry
 }
 
 // CosmosCollectorOption defines functional options for CosmosCollector
@@ -36,7 +37,7 @@ func WithCosmosLabels(labels map[string]string) CosmosCollectorOption {
 	}
 }
 
-func NewCosmosCollector(node config.Node, opts ...CosmosCollectorOption) (prometheus.Collector, error) {
+func NewCosmosCollector(node *config.Node, currency *currency.Registry, opts ...CosmosCollectorOption) (prometheus.Collector, error) {
 	// Create a connection to the gRPC server using NewClientConn
 	grpcAddr := strings.TrimPrefix(node.GrpcAddr, "grpc://")
 	conn, err := grpc.NewClient(
@@ -52,11 +53,13 @@ func NewCosmosCollector(node config.Node, opts ...CosmosCollectorOption) (promet
 	}
 
 	cosmosCollector := &CosmosCollector{
-		nodeName: node.Name,
-		conn:     conn,
-		client:   banktypes.NewQueryClient(conn),
-		unit:     node.Unit,
-		labels:   node.Labels,
+		nodeName:    node.Name,
+		conn:        conn,
+		client:      banktypes.NewQueryClient(conn),
+		unit:        node.Unit,
+		metricsUnit: node.MetricsUnit,
+		labels:      node.Labels,
+		currency:    currency,
 	}
 
 	// Apply options if needed for additional labels
@@ -67,7 +70,7 @@ func NewCosmosCollector(node config.Node, opts ...CosmosCollectorOption) (promet
 	return NewBaseCollector(
 		node,
 		cosmosCollector,
-		WithCollectorTimeout(10*time.Second),
+		WithCollectorTimeout(5*time.Second),
 	), nil
 }
 
@@ -79,43 +82,42 @@ func WithCosmosCurrencyRegistry(registry *currency.Registry) CosmosCollectorOpti
 
 // CollectAccountBalance implements IModuleCollector interface
 func (cc *CosmosCollector) CollectAccountBalance(ctx context.Context, account *config.Account) (*BaseResult, error) {
-	logger.Infof("collecting balance for %s", account.Address)
-	req := &banktypes.QueryAllBalancesRequest{
+	logger.Debugf("collecting balance for %s", account.Address)
+
+	req := &banktypes.QueryBalanceRequest{
 		Address: account.Address,
+		Denom:   cc.unit.Name,
 	}
 
-	balance, err := cc.client.AllBalances(ctx, req)
+	balance, err := cc.client.Balance(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get balance for %s: %w", account.Address, err)
 	}
 
-	// Sum up all balances (assuming we want total value in the native token)
+	// Convert to big.Float first
+	amount := new(big.Float).SetInt(balance.Balance.Amount.BigInt())
+	logger.Debugf("amount for %s: %s", account.Address, amount.String())
+
+	// Check if amount exceeds float64 range
+	if amount.IsInf() {
+		return nil, fmt.Errorf("balance for %s exceeds float64 range", account.Address)
+	}
+
 	var totalValue float64
-	for _, coin := range balance.Balances {
-		// Convert amount to float64
-		logger.Infof("coin: %s", coin.Amount)
-		amount, err := strconv.ParseFloat(coin.Amount.String(), 64)
-		if err != nil {
-			logger.Warnf("failed to convert amount %s to float64", coin.Amount)
-			return nil, err
-		}
-		totalValue += amount
+	totalValue, _ = amount.Float64()
+
+	// Convert to target unit
+	convertedValue, err := cc.currency.Convert(totalValue, cc.unit.Name, cc.metricsUnit.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert balance for %s: %w", account.Address, err)
 	}
 
-	if cc.currency != nil {
-		totalValue, err = cc.currency.Convert(totalValue, cc.unit.Name, cc.unit.Name)
-		if err != nil {
-			logger.Warnf("failed to convert amount %s to %s", totalValue, cc.unit.Name)
-			return nil, err
-		}
-	}
-
-	logger.Infof("balance for %s: %s (%f %s)", account.Address, balance.String(), totalValue, cc.unit.Symbol)
+	logger.Debugf("balance for %s: %s (%f %s)", account.Address, balance.String(), convertedValue, cc.metricsUnit.Symbol)
 
 	return &BaseResult{
 		NodeName: cc.nodeName,
 		Account:  *account,
-		Value:    totalValue,
+		Value:    convertedValue,
 		Health:   1.0,
 	}, nil
 }

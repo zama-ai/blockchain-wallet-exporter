@@ -65,12 +65,12 @@ func TestGet(t *testing.T) {
 	}{
 		{
 			name:    "existing unit",
-			unit:    "ETH",
+			unit:    "eth",
 			wantErr: false,
 		},
 		{
 			name:    "case insensitive",
-			unit:    "eth",
+			unit:    "ETH",
 			wantErr: false,
 		},
 		{
@@ -87,7 +87,7 @@ func TestGet(t *testing.T) {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
-				assert.Equal(t, strings.ToUpper(tt.unit), unit.Name)
+				assert.Equal(t, strings.ToLower(tt.unit), unit.Name)
 			}
 		})
 	}
@@ -105,34 +105,34 @@ func TestConvert(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "ETH to WEI",
+			name:    "eth to wei",
 			amount:  1.0,
-			from:    "ETH",
-			to:      "WEI",
+			from:    "eth",
+			to:      "wei",
 			want:    1e18,
 			wantErr: false,
 		},
 		{
-			name:    "WEI to ETH",
+			name:    "wei to eth",
 			amount:  1e18,
-			from:    "WEI",
-			to:      "ETH",
+			from:    "wei",
+			to:      "eth",
 			want:    1.0,
 			wantErr: false,
 		},
 		{
-			name:    "GWEI to WEI",
+			name:    "gwei to wei",
 			amount:  1.0,
-			from:    "GWEI",
-			to:      "WEI",
+			from:    "gwei",
+			to:      "wei",
 			want:    1e9,
 			wantErr: false,
 		},
 		{
 			name:    "same unit",
 			amount:  1.0,
-			from:    "ETH",
-			to:      "ETH",
+			from:    "eth",
+			to:      "eth",
 			want:    1.0,
 			wantErr: false,
 		},
@@ -140,31 +140,31 @@ func TestConvert(t *testing.T) {
 			name:    "invalid from unit",
 			amount:  1.0,
 			from:    "INVALID",
-			to:      "ETH",
+			to:      "eth",
 			want:    0,
 			wantErr: true,
 		},
 		{
 			name:    "ucosm to cosm",
 			amount:  1.0,
-			from:    "UCOSM",
-			to:      "COSM",
+			from:    "ucosm",
+			to:      "cosm",
 			want:    1e-6,
 			wantErr: false,
 		},
 		{
 			name:    "cosm to ucosm",
 			amount:  1.0,
-			from:    "COSM",
-			to:      "UCOSM",
+			from:    "cosm",
+			to:      "ucosm",
 			want:    1e6,
 			wantErr: false,
 		},
 		{
 			name:    "no conversion rate",
 			amount:  1.0,
-			from:    "ETH",
-			to:      "COSM",
+			from:    "eth",
+			to:      "cosm",
 			want:    0,
 			wantErr: true,
 		},
@@ -233,11 +233,11 @@ func TestList(t *testing.T) {
 		names[unit.Name] = true
 	}
 
-	assert.True(t, names["ETH"])
-	assert.True(t, names["WEI"])
-	assert.True(t, names["GWEI"])
-	assert.True(t, names["COSM"])
-	assert.True(t, names["UCOSM"])
+	assert.True(t, names["eth"])
+	assert.True(t, names["wei"])
+	assert.True(t, names["gwei"])
+	assert.True(t, names["cosm"])
+	assert.True(t, names["ucosm"])
 }
 
 func TestMustRegisterAndMustGet(t *testing.T) {
@@ -256,7 +256,7 @@ func TestMustRegisterAndMustGet(t *testing.T) {
 	// Test MustGet success
 	assert.NotPanics(t, func() {
 		unit := r.MustGet("ETH")
-		assert.Equal(t, "ETH", unit.Name)
+		assert.Equal(t, "eth", unit.Name)
 	})
 
 	// Test MustGet panic

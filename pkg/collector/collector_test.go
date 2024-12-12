@@ -117,11 +117,12 @@ func TestBaseCollector_CollectMetrics(t *testing.T) {
 				},
 			}
 
-			node := config.Node{
-				Name:     "test-node",
-				Module:   "evm",
-				Unit:     registry.MustGet("ETH"),
-				Accounts: tt.accounts,
+			node := &config.Node{
+				Name:        "test-node",
+				Module:      "evm",
+				Unit:        registry.MustGet("ETH"),
+				MetricsUnit: registry.MustGet("WEI"),
+				Accounts:    tt.accounts,
 				Labels: map[string]string{
 					"network": "testnet",
 				},
