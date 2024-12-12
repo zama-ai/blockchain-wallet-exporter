@@ -71,7 +71,7 @@ type IModuleCollector interface {
 	Close() error
 }
 
-func NewBaseCollector(node config.Node, processor IModuleCollector, opts ...CollectorOption) prometheus.Collector {
+func NewBaseCollector(node *config.Node, processor IModuleCollector, opts ...CollectorOption) prometheus.Collector {
 	var (
 		constLabels prometheus.Labels
 	)
@@ -84,7 +84,12 @@ func NewBaseCollector(node config.Node, processor IModuleCollector, opts ...Coll
 	constLabels["node_name"] = node.Name
 	constLabels["module"] = string(ModuleNames[node.Module])
 	constLabelsHealth := constLabels
-	constLabels["symbol"] = node.Unit.Symbol
+
+	constLabels["unit"] = node.Unit.Symbol
+	if node.MetricsUnit != nil {
+		constLabels["unit"] = node.MetricsUnit.Symbol
+	}
+	logger.Infof("constLabels: %v", constLabels)
 
 	collector := &BaseCollector{
 		nodeName:  node.Name,
@@ -126,17 +131,15 @@ func (c *BaseCollector) collectMetrics() []*BaseResult {
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
 
-	var resultsMutex sync.Mutex
+	// Create a buffered channel to collect results
+	resultsChan := make(chan *BaseResult, len(c.accounts))
 
 	err := flowmatic.Each(DefaultMaxConcurrency, c.accounts, func(account *config.Account) error {
-		var result *BaseResult
-		var err error
+		logger.Debugf("collecting metrics for account: %s", account.Address)
 
-		result, err = c.processor.CollectAccountBalance(ctx, account)
-		resultsMutex.Lock()
-
-		// only log error
+		result, err := c.processor.CollectAccountBalance(ctx, account)
 		if err != nil {
+			logger.Errorf("error collecting metrics for account %s: %v", account.Address, err)
 			result = &BaseResult{
 				NodeName: c.nodeName,
 				Account:  *account,
@@ -144,15 +147,18 @@ func (c *BaseCollector) collectMetrics() []*BaseResult {
 			}
 		}
 
-		// Thread-safe results append
-		results = append(results, result)
-		resultsMutex.Unlock()
-
+		resultsChan <- result
 		return nil
 	})
 
 	if err != nil {
-		logger.Errorf("error collecting metrics: %v", err)
+		logger.Errorf("error in collection process: %v", err)
+	}
+
+	// Close channel and collect results
+	close(resultsChan)
+	for result := range resultsChan {
+		results = append(results, result)
 	}
 
 	return results
@@ -167,11 +173,12 @@ func (c *BaseCollector) Describe(ch chan<- *prometheus.Desc) {
 func (c *BaseCollector) Collect(ch chan<- prometheus.Metric) {
 	c.collectMutex.Lock()
 	defer c.collectMutex.Unlock()
+	logger.Infof("collecting metrics from %s", c.nodeName)
 
 	metrics := c.collectMetrics()
 
 	for _, result := range metrics {
-		logger.Infof("%s: %f", string(c.module), result.Health)
+		logger.Debugf("%s: %f", string(c.module), result.Health)
 
 		labels := prometheus.Labels{
 			"address":      result.Account.Address,
@@ -182,7 +189,7 @@ func (c *BaseCollector) Collect(ch chan<- prometheus.Metric) {
 		c.health.Collect(ch)
 		c.health.Reset()
 
-		logger.Infof("Collecting metric with labels: %v", labels)
+		logger.Debugf("Collecting metric with labels: %v", labels)
 		if result.Health > 0 {
 			c.metrics.With(labels).Set(result.Value)
 			c.metrics.Collect(ch)

@@ -28,15 +28,18 @@ nodes:
         name: "test-account-2"
 `
 
-	config := ReadConfig(strings.NewReader(yamlContent))
+	config, err := ReadConfigWithError(strings.NewReader(yamlContent))
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
 
 	tests := []struct {
 		nodeName    string
 		wantUnit    string
 		wantUnitStr string
 	}{
-		{"ethereum-node", "ETH", "ETH"},
-		{"polygon-node", "WEI", "WEI"},
+		{"ethereum-node", "eth", "eth"},
+		{"polygon-node", "wei", "wei"},
 	}
 
 	for _, tt := range tests {
@@ -44,7 +47,7 @@ nodes:
 			var node *Node
 			for _, n := range config.Nodes {
 				if n.Name == tt.nodeName {
-					node = &n
+					node = n
 					break
 				}
 			}

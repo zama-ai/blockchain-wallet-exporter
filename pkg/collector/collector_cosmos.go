@@ -19,12 +19,13 @@ import (
 
 // CosmosCollector implements the IModuleCollector interface for Cosmos chains
 type CosmosCollector struct {
-	nodeName string
-	conn     *grpc.ClientConn
-	client   banktypes.QueryClient
-	labels   map[string]string
-	unit     *currency.Unit
-	currency *currency.Registry
+	nodeName    string
+	conn        *grpc.ClientConn
+	client      banktypes.QueryClient
+	labels      map[string]string
+	unit        *currency.Unit
+	metricsUnit *currency.Unit
+	currency    *currency.Registry
 }
 
 // CosmosCollectorOption defines functional options for CosmosCollector
@@ -36,7 +37,7 @@ func WithCosmosLabels(labels map[string]string) CosmosCollectorOption {
 	}
 }
 
-func NewCosmosCollector(node config.Node, currency *currency.Registry, opts ...CosmosCollectorOption) (prometheus.Collector, error) {
+func NewCosmosCollector(node *config.Node, currency *currency.Registry, opts ...CosmosCollectorOption) (prometheus.Collector, error) {
 	// Create a connection to the gRPC server using NewClientConn
 	grpcAddr := strings.TrimPrefix(node.GrpcAddr, "grpc://")
 	conn, err := grpc.NewClient(
@@ -52,12 +53,13 @@ func NewCosmosCollector(node config.Node, currency *currency.Registry, opts ...C
 	}
 
 	cosmosCollector := &CosmosCollector{
-		nodeName: node.Name,
-		conn:     conn,
-		client:   banktypes.NewQueryClient(conn),
-		unit:     node.Unit,
-		labels:   node.Labels,
-		currency: currency,
+		nodeName:    node.Name,
+		conn:        conn,
+		client:      banktypes.NewQueryClient(conn),
+		unit:        node.Unit,
+		metricsUnit: node.MetricsUnit,
+		labels:      node.Labels,
+		currency:    currency,
 	}
 
 	// Apply options if needed for additional labels
@@ -68,7 +70,7 @@ func NewCosmosCollector(node config.Node, currency *currency.Registry, opts ...C
 	return NewBaseCollector(
 		node,
 		cosmosCollector,
-		WithCollectorTimeout(10*time.Second),
+		WithCollectorTimeout(5*time.Second),
 	), nil
 }
 
@@ -80,7 +82,7 @@ func WithCosmosCurrencyRegistry(registry *currency.Registry) CosmosCollectorOpti
 
 // CollectAccountBalance implements IModuleCollector interface
 func (cc *CosmosCollector) CollectAccountBalance(ctx context.Context, account *config.Account) (*BaseResult, error) {
-	logger.Infof("collecting balance for %s", account.Address)
+	logger.Debugf("collecting balance for %s", account.Address)
 
 	req := &banktypes.QueryBalanceRequest{
 		Address: account.Address,
@@ -94,6 +96,7 @@ func (cc *CosmosCollector) CollectAccountBalance(ctx context.Context, account *c
 
 	// Convert to big.Float first
 	amount := new(big.Float).SetInt(balance.Balance.Amount.BigInt())
+	logger.Debugf("amount for %s: %s", account.Address, amount.String())
 
 	// Check if amount exceeds float64 range
 	if amount.IsInf() {
@@ -103,12 +106,18 @@ func (cc *CosmosCollector) CollectAccountBalance(ctx context.Context, account *c
 	var totalValue float64
 	totalValue, _ = amount.Float64()
 
-	logger.Debugf("balance for %s: %s (%f %s)", account.Address, balance.String(), totalValue, cc.unit.Symbol)
+	// Convert to target unit
+	convertedValue, err := cc.currency.Convert(totalValue, cc.unit.Name, cc.metricsUnit.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert balance for %s: %w", account.Address, err)
+	}
+
+	logger.Debugf("balance for %s: %s (%f %s)", account.Address, balance.String(), convertedValue, cc.metricsUnit.Symbol)
 
 	return &BaseResult{
 		NodeName: cc.nodeName,
 		Account:  *account,
-		Value:    totalValue,
+		Value:    convertedValue,
 		Health:   1.0,
 	}, nil
 }

@@ -69,7 +69,7 @@ func TestEVMCollector_CollectAccountBalance(t *testing.T) {
 	// Test cases
 	tests := []struct {
 		name           string
-		nodeConfig     config.Node
+		nodeConfig     *config.Node
 		account        *config.Account
 		labels         prometheus.Labels
 		expectedValue  float64
@@ -78,11 +78,12 @@ func TestEVMCollector_CollectAccountBalance(t *testing.T) {
 	}{
 		{
 			name: "successful balance query in eth",
-			nodeConfig: config.Node{
+			nodeConfig: &config.Node{
 				Name:          "test-eth-node",
 				HttpAddr:      server.URL,
 				Module:        "evm",
-				Unit:          currencyRegistry.MustGet("ETH"),
+				Unit:          currencyRegistry.MustGet("WEI"),
+				MetricsUnit:   currencyRegistry.MustGet("ETH"),
 				HttpSSLVerify: "true",
 				Authorization: nil,
 				Labels:        prometheus.Labels{"app": "test-eth-node"},
@@ -97,11 +98,12 @@ func TestEVMCollector_CollectAccountBalance(t *testing.T) {
 		},
 		{
 			name: "successful balance query in wei",
-			nodeConfig: config.Node{
+			nodeConfig: &config.Node{
 				Name:          "test-eth-node",
 				HttpAddr:      server.URL,
 				Module:        "evm",
 				Unit:          currencyRegistry.MustGet("WEI"),
+				MetricsUnit:   currencyRegistry.MustGet("WEI"),
 				HttpSSLVerify: "true",
 				Authorization: nil,
 				Labels:        prometheus.Labels{"app": "test-eth-node"},

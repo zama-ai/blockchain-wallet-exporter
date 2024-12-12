@@ -19,7 +19,7 @@ The Blockchain Wallet Exporter is a tool designed to retrieve and export wallet 
 - Export balances as metrics.
 - Support concurrent balance retrieval.
 - Provide consistent label keys across all wallets.
-- Default balance unit is eth for Ethereum and ucosm for Cosmos.
+- Default balance unit is wei for Ethereum and ucosm for Cosmos.
 
 ## Non-Goals
 
@@ -42,8 +42,10 @@ nodes:
     module: cosmos
     grpcAddr: "grpc://127.0.0.1:9090"
     grpcSSLVerify: false
-    # unit can be ucosm, cosm
+    # unit represents the base unit from the chain
     unit: ucosm # default unit is ucosm for cosmos
+    # metricsUnit represents the unit used for Prometheus metrics export
+    metricsUnit: cosm # exported metrics unit (optional, defaults to base unit)
     accounts:
       - address: "wasm..."
         name: wasm-1
@@ -57,8 +59,9 @@ nodes:
     module: evm
     httpAddr: "http://127.0.0.1:8545"
     httpSSLVerify: false
-    # unit can be wei, gwei, eth
+    # unit represents the base unit from the chain
     unit: wei # default unit is wei for ethereum
+    metricsUnit: eth # exported metrics unit for prometheus
     accounts:
       - address: "0x02933E8678FE8F5D4CFFD0E331A264CD86AEBD8A"
         name: eth-2

@@ -23,48 +23,48 @@ type Registry struct {
 var (
 	// Pre-defined currency units configurations (but not registered)
 	DefaultETH = &Unit{
-		Name:         "ETH",
-		Symbol:       "ETH",
+		Name:         "eth",
+		Symbol:       "eth",
 		Decimals:     18,
 		ChainType:    "evm",
 		Description:  "Ethereum",
-		ConversionTo: map[string]float64{"WEI": 1e18, "GWEI": 1e9},
+		ConversionTo: map[string]float64{"wei": 1e18, "gwei": 1e9},
 	}
 
 	DefaultGWEI = &Unit{
-		Name:         "GWEI",
-		Symbol:       "GWEI",
+		Name:         "gwei",
+		Symbol:       "gwei",
 		Decimals:     9,
 		ChainType:    "evm",
 		Description:  "Gwei",
-		ConversionTo: map[string]float64{"ETH": 1e-9, "WEI": 1e9},
+		ConversionTo: map[string]float64{"eth": 1e-9, "wei": 1e9},
 	}
 
 	DefaultWEI = &Unit{
-		Name:         "WEI",
-		Symbol:       "WEI",
+		Name:         "wei",
+		Symbol:       "wei",
 		Decimals:     0,
 		ChainType:    "evm",
 		Description:  "Wei (smallest Ethereum unit)",
-		ConversionTo: map[string]float64{"ETH": 1e-18, "GWEI": 1e-9},
+		ConversionTo: map[string]float64{"eth": 1e-18, "gwei": 1e-9},
 	}
 
 	DefaultCOSM = &Unit{
-		Name:         "COSM",
-		Symbol:       "COSM",
+		Name:         "cosm",
+		Symbol:       "cosm",
 		Decimals:     6,
 		ChainType:    "cosmos",
 		Description:  "Cosmos USD",
-		ConversionTo: map[string]float64{"UCOSM": 1e6},
+		ConversionTo: map[string]float64{"ucosm": 1e6},
 	}
 
 	DefaultUCOSM = &Unit{
-		Name:         "UCOSM",
-		Symbol:       "UCOSM",
+		Name:         "ucosm",
+		Symbol:       "ucosm",
 		Decimals:     0,
 		ChainType:    "cosmos",
 		Description:  "Cosmos smallest unit",
-		ConversionTo: map[string]float64{"COSM": 1e-6},
+		ConversionTo: map[string]float64{"cosm": 1e-6},
 	}
 )
 
@@ -81,7 +81,7 @@ func (r *Registry) Register(unit *Unit) (*Unit, error) {
 		return nil, fmt.Errorf("currency unit name cannot be empty")
 	}
 
-	normalizedName := strings.ToUpper(unit.Name)
+	normalizedName := strings.ToLower(unit.Name)
 	if _, exists := r.units[normalizedName]; exists {
 		return nil, fmt.Errorf("currency unit %s already registered", normalizedName)
 	}
@@ -101,7 +101,7 @@ func (r *Registry) MustRegister(unit *Unit) *Unit {
 
 // Get retrieves a currency unit from the registry
 func (r *Registry) Get(name string) (*Unit, error) {
-	normalizedName := strings.ToUpper(name)
+	normalizedName := strings.ToLower(name)
 	unit, exists := r.units[normalizedName]
 	if !exists {
 		return nil, fmt.Errorf("currency unit %s not found", name)

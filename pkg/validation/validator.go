@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
-	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
 )
 
 var (
@@ -73,7 +72,7 @@ func (v *ConfigValidator) ValidateConfig(cfg *config.Schema) error {
 			continue
 		}
 
-		if errs := validator.ValidateNode(&node); len(errs) > 0 {
+		if errs := validator.ValidateNode(node); len(errs) > 0 {
 			allErrors = append(allErrors, errs...)
 		}
 	}
@@ -87,7 +86,6 @@ func (v *ConfigValidator) ValidateConfig(cfg *config.Schema) error {
 // validateGlobal validates the global configuration
 func (v *ConfigValidator) validateGlobal(global *config.Global) ValidationErrors {
 	var errors ValidationErrors
-	logger.Infof("validating global config: %v", global)
 
 	if global.MetricsAddr == "" {
 		errors = append(errors, ValidationError{
@@ -111,4 +109,53 @@ func (v *ConfigValidator) validateGlobal(global *config.Global) ValidationErrors
 	}
 
 	return errors
+}
+
+// UnitValidationConfig holds the configuration for unit validation
+type UnitValidationConfig struct {
+	ValidUnits []string
+	UnitType   string // e.g., "cosmos", "evm"
+}
+
+// validateUnitWithConfig validates source and target units against allowed values
+func (v *BaseValidator) validateUnitWithConfig(node *config.Node, config UnitValidationConfig) ValidationErrors {
+	var errors ValidationErrors
+
+	if node.Unit == nil {
+		errors = append(errors, ValidationError{
+			Field:   "unit",
+			Message: "unit cannot be empty",
+		})
+		return errors
+	}
+
+	// Validate source unit
+	if !contains(config.ValidUnits, node.Unit.Name) {
+		errors = append(errors, ValidationError{
+			Field: "unit",
+			Message: fmt.Sprintf("unit must be one of %v for %s chains",
+				config.ValidUnits, config.UnitType),
+		})
+	}
+
+	// Validate target unit
+	if node.MetricsUnit != nil && !contains(config.ValidUnits, node.MetricsUnit.Name) {
+		errors = append(errors, ValidationError{
+			Field: "metricsUnit",
+			Message: fmt.Sprintf("metricsUnit must be one of %v for %s chains",
+				config.ValidUnits, config.UnitType),
+		})
+	}
+
+	return errors
+}
+
+// contains checks if a string is present in a slice
+func contains(slice []string, str string) bool {
+	for _, v := range slice {
+		if v == str {
+			return true
+		}
+	}
+	return false
 }

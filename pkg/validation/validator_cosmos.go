@@ -73,24 +73,10 @@ func (v *CosmosValidator) validateGRPCAddress(node *config.Node) ValidationError
 }
 
 func (v *CosmosValidator) validateUnit(node *config.Node) ValidationErrors {
-	var errors ValidationErrors
-
-	if node.Unit == nil {
-		errors = append(errors, ValidationError{
-			Field:   "unit",
-			Message: "unit cannot be empty",
-		})
-		return errors
-	}
-
-	if node.Unit.Name != currency.DefaultCOSM.Name && node.Unit.Name != currency.DefaultUCOSM.Name {
-		errors = append(errors, ValidationError{
-			Field:   "unit",
-			Message: "unit must be COSM or UCOSM for Cosmos chains",
-		})
-	}
-
-	return errors
+	return v.validateUnitWithConfig(node, UnitValidationConfig{
+		ValidUnits: []string{currency.DefaultCOSM.Name, currency.DefaultUCOSM.Name},
+		UnitType:   currency.DefaultCOSM.ChainType,
+	})
 }
 
 func (v *CosmosValidator) validateAccounts(node *config.Node) ValidationErrors {
