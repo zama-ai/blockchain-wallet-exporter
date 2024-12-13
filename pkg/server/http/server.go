@@ -17,6 +17,7 @@ import (
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/validation"
 
+	ioPrometheusClient "github.com/prometheus/client_model/go"
 	"go.uber.org/zap"
 )
 
@@ -156,5 +157,58 @@ func (s *Server) MapRoutes() error {
 		ErrorLog:      log.New(os.Stderr, log.Prefix(), log.Flags()),
 		ErrorHandling: promhttp.ContinueOnError,
 	})))
+
+	v1.Get("/accounts", func(c *fiber.Ctx) error {
+		address := c.Query("address")
+		metrics, err := s.registry.Gather()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": err.Error(),
+			})
+		}
+
+		var filteredMetrics []*ioPrometheusClient.MetricFamily
+		for _, metric := range metrics {
+			if metric.GetName() == "blockchain_wallet_balance" ||
+				metric.GetName() == "blockchain_wallet_health" {
+
+				if address != "" {
+					filteredMetric := &ioPrometheusClient.MetricFamily{
+						Name:   metric.Name,
+						Help:   metric.Help,
+						Type:   metric.Type,
+						Metric: filterMetricsByAddress(metric.Metric, address),
+					}
+					if len(filteredMetric.Metric) > 0 {
+						filteredMetrics = append(filteredMetrics, filteredMetric)
+					}
+				} else {
+					filteredMetrics = append(filteredMetrics, metric)
+				}
+			}
+		}
+
+		if len(filteredMetrics) == 0 {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "No metrics found for the given address",
+			})
+		}
+
+		return c.JSON(filteredMetrics)
+	})
 	return nil
+}
+
+// Helper function to filter metrics by address
+func filterMetricsByAddress(metrics []*ioPrometheusClient.Metric, address string) []*ioPrometheusClient.Metric {
+	var filtered []*ioPrometheusClient.Metric
+	for _, m := range metrics {
+		for _, label := range m.GetLabel() {
+			if label.GetName() == "address" && label.GetValue() == address {
+				filtered = append(filtered, m)
+				break
+			}
+		}
+	}
+	return filtered
 }
