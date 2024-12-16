@@ -1,7 +1,8 @@
 TAG?=v0.1.0
 DATE?=$(shell date +%Y-%m-%d-%H:%M:%S)
 COMMIT?=$(shell git rev-parse HEAD)
-LDFLAGS=-ldflags "-s -w -X main.version=$(TAG) -X main.commit=$(COMMIT) -X main.date=$(DATE)"
+PACKAGE?= github.com/zama-ai/blockchain-wallet-exporter/pkg/version
+LDFLAGS=-ldflags "-s -w -X $(PACKAGE).Version=$(TAG) -X $(PACKAGE).Commit=$(COMMIT) -X $(PACKAGE).Date=$(DATE)"
 REGISTRY?=ghcr.io/zama-ai/blockchain-wallet-exporter
 BIN?=blockchain-wallet-exporter
 ARCH?=amd64

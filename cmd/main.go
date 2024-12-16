@@ -11,15 +11,10 @@ import (
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
+	"github.com/zama-ai/blockchain-wallet-exporter/pkg/version"
+
 	httpfiber "github.com/zama-ai/blockchain-wallet-exporter/pkg/server/http"
 	"go.uber.org/zap/zapcore"
-)
-
-// Build-time variables
-var (
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
 )
 
 var (
@@ -31,11 +26,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		versionInfo := map[string]string{
-			"tag":    version,
-			"commit": commit,
-			"date":   date,
-		}
+		versionInfo := version.GetVersion()
 		versionJSON, _ := json.Marshal(versionInfo)
 		fmt.Println(string(versionJSON))
 		return
