@@ -10,6 +10,7 @@ import (
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
+	"github.com/zama-ai/blockchain-wallet-exporter/pkg/version"
 )
 
 const (
@@ -79,6 +80,9 @@ func NewBaseCollector(node *config.Node, processor IModuleCollector, opts ...Col
 	if node.Labels != nil {
 		constLabels = node.Labels
 	}
+
+	// add exporter version to constLabels
+	constLabels["exporter_version"] = version.Version
 
 	// append nodename and module to constLabels in order to have a unique identifier for the metrics
 	constLabels["node_name"] = node.Name
