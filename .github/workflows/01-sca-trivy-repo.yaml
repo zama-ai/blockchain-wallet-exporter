@@ -92,10 +92,10 @@ jobs:
         if: success() || failure()
         with:
           name: trivy.reports.${{ steps.run_trivy.outputs.REPORT_FILE_NAME }}
-          path: 
-            ${{ github.workspace }}/trivy.${{ steps.run_trivy.outputs.REPORT_FILE_NAME }}.html
-            ${{ github.workspace }}/trivy.${{ steps.run_trivy.outputs.REPORT_FILE_NAME }}.sarif
-            ${{ github.workspace }}/trivy.${{ steps.run_trivy.outputs.REPORT_FILE_NAME }}.json
+          path: |
+            trivy.*.html
+            trivy.*.sarif
+            trivy.*.json
 
       # Works in public repos always and only with private repos in GH Enterprise + Advanced Security.
       # Set true if you have GH Enterprise + Advanced Security enabled for private repos.
