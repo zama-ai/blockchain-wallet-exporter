@@ -101,7 +101,7 @@ jobs:
       # Set true if you have GH Enterprise + Advanced Security enabled for private repos.
       - name: Load Trivy SARIF Report to GitHub Security Hub
         uses: github/codeql-action/upload-sarif@ea9e4e37992a54ee68a9622e985e60c8e8f12d9f    # v3.27.4
-        if: true 
+        if: false
         with:
           sarif_file: trivy.${{ steps.run_trivy.outputs.REPORT_FILE_NAME }}.sarif
           category: sca-trivy-repo
