@@ -9,7 +9,7 @@ require (
 	github.com/cosmos/btcutil v1.0.5
 	github.com/cosmos/cosmos-sdk v0.50.11
 	github.com/ethereum/go-ethereum v1.14.13
-	github.com/gofiber/contrib/fiberzap/v2 v2.1.5
+	github.com/gofiber/contrib/fiberzap/v2 v2.1.6
 	github.com/gofiber/fiber/v2 v2.52.6
 	github.com/prometheus/client_golang v1.21.1
 	github.com/samber/slog-zap/v2 v2.6.2
