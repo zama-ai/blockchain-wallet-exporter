@@ -49,6 +49,7 @@ run-macos:
 destroy:
 	docker-compose down
 
+
 help:
 	@echo "Targets:"
 	@echo "  build: Build the application"
