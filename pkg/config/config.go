@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
 	"gopkg.in/yaml.v2"
@@ -48,6 +49,11 @@ func (s *Schema) Normalize() error {
 		if err := node.Normalize(); err != nil {
 			return fmt.Errorf("failed to normalize node %s: %w", node.Name, err)
 		}
+		for _, acc := range node.Accounts {
+			if err := acc.Normalize(); err != nil {
+				return fmt.Errorf("failed to normalize account %s for node %s: %w", acc.Name, node.Name, err)
+			}
+		}
 	}
 	return nil
 }
@@ -65,8 +71,19 @@ type Authorization struct {
 }
 
 type Account struct {
-	Address string `yaml:"address"`
-	Name    string `yaml:"name"`
+	Address    string `yaml:"address"`
+	AddressEnv string `yaml:"addressEnv"`
+	Name       string `yaml:"name"`
+}
+
+func (a *Account) Normalize() error {
+	if a.AddressEnv != "" {
+		envValue := os.Getenv(a.AddressEnv)
+		if envValue != "" {
+			a.Address = envValue
+		}
+	}
+	return nil
 }
 
 func NewConfig(path string) (*Schema, error) {

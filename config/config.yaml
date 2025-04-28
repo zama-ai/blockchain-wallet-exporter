@@ -46,9 +46,15 @@ nodes:
     #  password: "kms"
     accounts:
       - address: "0xaF3960e040591bea674677dF567c649258962c22"
+        # envAddress can be used to override the address from the environment variable
+        envAddress: "FHEVM_1_ADDRESS"
         name: fhevm-1
       - address: "0x1BF621Aa9ceE3F6154881c25041bB39AEd4ca7Cc"
+        # envAddress can be used to override the address from the environment variable
+        envAddress: "FHEVM_2_ADDRESS"
         name: fhevm-2
+      # - name: fhevm-3-env
+      #   addressEnv: "FHEVM_3_ADDRESS" # Environment variable name
 
       # Demo with invalid address
       #- address: "0xc361fc33b99F88612257ac8cc2D852A5CEe0E217"
