@@ -133,3 +133,72 @@ nodes:
 		})
 	}
 }
+
+func TestHttpAddrEnvOverride(t *testing.T) {
+	// Set environment variable for the test
+	const envVarName = "TEST_HTTP_ADDR"
+	const envVarValue = "https://env-override-rpc.example.com"
+	t.Setenv(envVarName, envVarValue)
+
+	yamlContent := `
+global:
+  environment: "test"
+  metricsAddr: ":2113"
+  logLevel: "debug"
+nodes:
+  - name: "node-1"
+    module: "evm"
+    httpAddr: "https://original-rpc.example.com"
+    unit: "ETH"
+  - name: "node-2"
+    module: "evm"
+    httpAddr: "https://original-rpc.example.com"
+    httpAddrEnv: "NON_EXISTENT_ENV_VAR"
+    unit: "ETH"
+  - name: "node-3"
+    module: "evm"
+    httpAddr: "https://original-rpc.example.com"
+    httpAddrEnv: "TEST_HTTP_ADDR"
+    unit: "ETH"
+  - name: "node-4"
+    module: "evm"
+    httpAddrEnv: "TEST_HTTP_ADDR"
+    unit: "ETH"
+`
+
+	config, err := ReadConfigWithError(strings.NewReader(yamlContent))
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+
+	if len(config.Nodes) != 4 {
+		t.Fatalf("unexpected number of nodes parsed")
+	}
+
+	tests := []struct {
+		nodeName     string
+		wantHttpAddr string
+	}{
+		{"node-1", "https://original-rpc.example.com"}, // No env var
+		{"node-2", "https://original-rpc.example.com"}, // Env var not set
+		{"node-3", envVarValue},                        // Env var set, should override
+		{"node-4", envVarValue},                        // Only env var, no original
+	}
+
+	nodeMap := make(map[string]*Node)
+	for _, node := range config.Nodes {
+		nodeMap[node.Name] = node
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.nodeName, func(t *testing.T) {
+			node, ok := nodeMap[tt.nodeName]
+			if !ok {
+				t.Fatalf("node %s not found in parsed config", tt.nodeName)
+			}
+			if node.HttpAddr != tt.wantHttpAddr {
+				t.Errorf("got HttpAddr %q, want %q", node.HttpAddr, tt.wantHttpAddr)
+			}
+		})
+	}
+}

@@ -35,6 +35,7 @@ type Node struct {
 	Module        string            `yaml:"module"`
 	GrpcAddr      string            `yaml:"grpcAddr"`
 	HttpAddr      string            `yaml:"httpAddr"`
+	HttpAddrEnv   string            `yaml:"httpAddrEnv"`
 	MetricsUnit   *currency.Unit    `yaml:"metricsUnit"`
 	Unit          *currency.Unit    `yaml:"unit"`
 	HttpSSLVerify string            `yaml:"httpSSLVerify"`
@@ -61,6 +62,12 @@ func (s *Schema) Normalize() error {
 func (n *Node) Normalize() error {
 	if n.MetricsUnit == nil {
 		n.MetricsUnit = n.Unit
+	}
+	if n.HttpAddrEnv != "" {
+		envValue := os.Getenv(n.HttpAddrEnv)
+		if envValue != "" {
+			n.HttpAddr = envValue
+		}
 	}
 	return nil
 }
