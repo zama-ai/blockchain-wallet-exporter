@@ -3,6 +3,14 @@ global:
   metricsAddr: ":9091"
   logLevel: debug
   
+  # Auto-refund configuration (optional)
+  autoRefund:
+    enabled: true
+    schedule: "@every 1m"  # Every 5 minutes (cron format)
+    faucetUrl: "http://localhost:8080"
+    # faucetUrlEnv: "FAUCET_URL"  # Override from environment variable
+    timeout: 30  # Timeout in seconds for faucet operations
+  
   # TODO: support allow failure mode
   #allowFailure: true
 
@@ -21,30 +29,37 @@ global:
 nodes:
   - name: gateway
     module: evm
-    httpAddr: "https://ethereum-mainnet.rpc.starton.com"
+    httpAddr: "https://l2-gateway-node-zws-dev-http.diplodocus-boa.ts.net"
     
     # httpAddrEnv can be used to override the httpAddr from the environment variable
     # httpAddrEnv: "FHEVM_1_HTTP_ADDR"
 
     # unit can be wei, gwei, eth
-    unit: gwei
+    unit: eth
     httpSSLVerify: false
     #authorization:
     #  username: "kms"
     #  password: "kms"
     accounts:
-      - address: "0xaF3960e040591bea674677dF567c649258962c22"
+      - address: "0x9A39172023014032287A2Baf52E5869b0a934EB3"
         # envAddress can be used to override the address from the environment variable
-        envAddress: "FHEVM_1_ADDRESS"
-        name: fhevm-1
-      - address: "0x1BF621Aa9ceE3F6154881c25041bB39AEd4ca7Cc"
-        # envAddress can be used to override the address from the environment variable
-        envAddress: "FHEVM_2_ADDRESS"
-        name: fhevm-2
+        # envAddress: "FHEVM_1_ADDRESS"
+        name: test
+        # Auto-refund configuration for this account
+        refundThreshold: 1.1
+        refundTarget: 1.2
+
+      # - address: "0x1BF621Aa9ceE3F6154881c25041bB39AEd4ca7Cc"
+      #   # envAddress can be used to override the address from the environment variable
+      #   # envAddress: "FHEVM_2_ADDRESS"
+      #   name: fhevm-2
+      #   # Different thresholds for different accounts
+      #   refundThreshold: 0.05  # Trigger refund when balance is below 0.05 gwei
+      #   refundTarget: 0.5      # Refund to reach 0.5 gwei
       # - name: fhevm-3-env
       #   addressEnv: "FHEVM_3_ADDRESS" # Environment variable name
 
-      # Demo with invalid address
+      # Demo with invalid address (no auto-refund configured)
       #- address: "0xc361fc33b99F88612257ac8cc2D852A5CEe0E217"
       #  name: invalid-address
 
