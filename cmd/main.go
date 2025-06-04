@@ -11,6 +11,7 @@ import (
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
+	"github.com/zama-ai/blockchain-wallet-exporter/pkg/scheduler"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/version"
 
 	httpfiber "github.com/zama-ai/blockchain-wallet-exporter/pkg/server/http"
@@ -57,6 +58,27 @@ func main() {
 	// Initialize prometheus registry
 	promRegistry := prometheus.NewRegistry()
 
+	// Initialize auto-refund scheduler if enabled
+	var refundScheduler *scheduler.RefundScheduler
+	if config.Global.AutoRefund != nil && config.Global.AutoRefund.Enabled {
+		logger.Infof("Auto-refund is enabled, initializing scheduler...")
+		refundScheduler, err = scheduler.NewRefundScheduler(config, currencyRegistry)
+		if err != nil {
+			logger.Fatalf("Failed to create refund scheduler: %v", err)
+		}
+
+		// Start scheduler in a separate goroutine
+		go func() {
+			if err := refundScheduler.Start(); err != nil {
+				logger.Fatalf("Failed to start refund scheduler: %v", err)
+			}
+		}()
+
+		logger.Infof("Auto-refund scheduler started with schedule: %s", config.Global.AutoRefund.Schedule)
+	} else {
+		logger.Infof("Auto-refund is disabled")
+	}
+
 	// Bootstrap Server with both registries
 	server := httpfiber.NewServer(config,
 		httpfiber.WithRegistry(promRegistry),
@@ -70,5 +92,19 @@ func main() {
 		}
 	}()
 	<-signalChain
+
+	// Graceful shutdown
+	logger.Infof("Shutting down...")
+
+	// Stop scheduler first
+	if refundScheduler != nil {
+		logger.Infof("Stopping auto-refund scheduler...")
+		if err := refundScheduler.Stop(); err != nil {
+			logger.Errorf("Failed to stop refund scheduler: %v", err)
+		}
+	}
+
+	// Stop server
 	server.Stop()
+	logger.Infof("Shutdown complete")
 }

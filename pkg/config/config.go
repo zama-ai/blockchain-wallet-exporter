@@ -19,8 +19,20 @@ type Global struct {
 	MetricsAddr string `yaml:"metricsAddr"`
 	LogLevel    string `yaml:"logLevel"`
 
+	// Auto-refund scheduler configuration
+	AutoRefund *AutoRefund `yaml:"autoRefund"`
+
 	// TODO: add ssl config
 	SSL *SSL `yaml:"ssl"`
+}
+
+// AutoRefund configuration for the scheduler
+type AutoRefund struct {
+	Enabled      bool   `yaml:"enabled"`
+	Schedule     string `yaml:"schedule"` // Cron expression, e.g., "*/5 * * * *" for every 5 minutes
+	FaucetURL    string `yaml:"faucetUrl"`
+	FaucetURLEnv string `yaml:"faucetUrlEnv"`
+	Timeout      int    `yaml:"timeout"` // Timeout in seconds, default 30
 }
 
 // TODO: add ssl config
@@ -46,6 +58,13 @@ type Node struct {
 }
 
 func (s *Schema) Normalize() error {
+	// Normalize global auto-refund settings
+	if s.Global.AutoRefund != nil {
+		if err := s.Global.AutoRefund.Normalize(); err != nil {
+			return fmt.Errorf("failed to normalize auto-refund config: %w", err)
+		}
+	}
+
 	for _, node := range s.Nodes {
 		if err := node.Normalize(); err != nil {
 			return fmt.Errorf("failed to normalize node %s: %w", node.Name, err)
@@ -81,6 +100,10 @@ type Account struct {
 	Address    string `yaml:"address"`
 	AddressEnv string `yaml:"addressEnv"`
 	Name       string `yaml:"name"`
+
+	// Auto-refund configuration for this account
+	RefundThreshold *float64 `yaml:"refundThreshold"` // Balance threshold to trigger refund
+	RefundTarget    *float64 `yaml:"refundTarget"`    // Target balance to reach after refund
 }
 
 func (a *Account) Normalize() error {
@@ -89,6 +112,22 @@ func (a *Account) Normalize() error {
 		if envValue != "" {
 			a.Address = envValue
 		}
+	}
+	return nil
+}
+
+func (ar *AutoRefund) Normalize() error {
+	if ar.FaucetURLEnv != "" {
+		envValue := os.Getenv(ar.FaucetURLEnv)
+		if envValue != "" {
+			ar.FaucetURL = envValue
+		}
+	}
+	if ar.Timeout == 0 {
+		ar.Timeout = 30 // Default timeout of 30 seconds
+	}
+	if ar.Schedule == "" {
+		ar.Schedule = "@every 30m" // Default to every 30 minutes
 	}
 	return nil
 }
