@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
+	"github.com/zama-ai/blockchain-wallet-exporter/pkg/faucet"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/scheduler"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/version"
@@ -62,7 +64,9 @@ func main() {
 	var refundScheduler *scheduler.RefundScheduler
 	if config.Global.AutoRefund != nil && config.Global.AutoRefund.Enabled {
 		logger.Infof("Auto-refund is enabled, initializing scheduler...")
-		refundScheduler, err = scheduler.NewRefundScheduler(config, currencyRegistry)
+		faucetTimeout := time.Duration(config.Global.AutoRefund.Timeout) * time.Second
+		faucetClient := faucet.NewClient(config.Global.AutoRefund.FaucetURL, faucetTimeout)
+		refundScheduler, err = scheduler.NewRefundScheduler(config, currencyRegistry, faucetClient)
 		if err != nil {
 			logger.Fatalf("Failed to create refund scheduler: %v", err)
 		}

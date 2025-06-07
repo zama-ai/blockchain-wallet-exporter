@@ -72,6 +72,8 @@ type IModuleCollector interface {
 	Close() error
 }
 
+var _ IModuleCollector = (*BaseCollector)(nil)
+
 func NewBaseCollector(node *config.Node, processor IModuleCollector, opts ...CollectorOption) prometheus.Collector {
 	var (
 		constLabels prometheus.Labels
@@ -209,4 +211,8 @@ func (c *BaseCollector) Name() string {
 // Close implements proper cleanup
 func (c *BaseCollector) Close() error {
 	return c.processor.Close()
+}
+
+func (c *BaseCollector) CollectAccountBalance(ctx context.Context, account *config.Account) (*BaseResult, error) {
+	return c.processor.CollectAccountBalance(ctx, account)
 }

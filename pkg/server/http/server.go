@@ -74,21 +74,9 @@ func (s *Server) InitCollectors() error {
 	)
 
 	for _, node := range s.cfg.Nodes {
-		switch node.Module {
-		case "evm":
-			logger.Infof("initializing evm collector for %s", node.Name)
-			prometheusCollector, err = collector.NewEVMCollector(node, s.currencyRegistry, collector.WithEVMLabels(node.Labels))
-			if err != nil {
-				return fmt.Errorf("failed to init evm collector: %v", err)
-			}
-		case "cosmos":
-			logger.Infof("initializing cosmos collector for %s", node.Name)
-			prometheusCollector, err = collector.NewCosmosCollector(node, s.currencyRegistry, collector.WithCosmosLabels(node.Labels))
-			if err != nil {
-				return fmt.Errorf("failed to init cosmos collector: %v", err)
-			}
-		default:
-			return fmt.Errorf("invalid module: %s", node.Module)
+		prometheusCollector, err = collector.NewCollector(*node, s.currencyRegistry)
+		if err != nil {
+			return err
 		}
 		err = s.registry.Register(prometheusCollector)
 		if err != nil {
