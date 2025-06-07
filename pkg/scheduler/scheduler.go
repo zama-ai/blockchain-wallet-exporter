@@ -2,45 +2,28 @@ package scheduler
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"math/big"
-	"net"
-	"net/http"
-	"strings"
 	"sync"
 	"time"
 
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/robfig/cron/v3"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/collector"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/faucet"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
 	MAX_BUFFER_SIZE = 100
 )
 
-// ModuleCollector interface for the scheduler (simplified version of collector.IModuleCollector)
-type ModuleCollector interface {
-	CollectAccountBalance(ctx context.Context, account *config.Account) (*collector.BaseResult, error)
-	Close() error
-}
-
 // RefundScheduler manages automatic account refunding based on balance thresholds
 type RefundScheduler struct {
 	config           *config.Schema
-	faucetClient     *faucet.Client
+	faucetClient     faucet.Fauceter
 	currencyRegistry *currency.Registry
-	collectors       map[string]ModuleCollector
+	collectors       map[string]collector.IModuleCollector
 	cron             *cron.Cron
 
 	// Pre-calculated buffer size for event channel
@@ -77,7 +60,7 @@ type RefundEvent struct {
 }
 
 // NewRefundScheduler creates a new refund scheduler
-func NewRefundScheduler(cfg *config.Schema, currencyRegistry *currency.Registry) (*RefundScheduler, error) {
+func NewRefundScheduler(cfg *config.Schema, currencyRegistry *currency.Registry, faucetClient faucet.Fauceter) (*RefundScheduler, error) {
 	if cfg.Global.AutoRefund == nil || !cfg.Global.AutoRefund.Enabled {
 		return nil, fmt.Errorf("auto-refund is not enabled in configuration")
 	}
@@ -86,34 +69,20 @@ func NewRefundScheduler(cfg *config.Schema, currencyRegistry *currency.Registry)
 		return nil, fmt.Errorf("faucet URL is required for auto-refund")
 	}
 
-	// Create faucet client with currency registry
-	faucetTimeout := time.Duration(cfg.Global.AutoRefund.Timeout) * time.Second
-	faucetClient := faucet.NewClient(cfg.Global.AutoRefund.FaucetURL, faucetTimeout)
-
 	// Note: Faucet unit validation removed - faucet now only accepts wei amounts
 	// All currency conversion is handled in the scheduler
 
 	// Create collectors for each node
-	collectors := make(map[string]ModuleCollector)
+	collectors := make(map[string]collector.IModuleCollector)
 	for _, node := range cfg.Nodes {
-		var moduleCollector ModuleCollector
-		var err error
-
-		switch collector.ModuleNames[node.Module] {
-		case collector.EVM:
-			moduleCollector, err = NewEVMSchedulerCollector(node, currencyRegistry)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create EVM collector for node %s: %w", node.Name, err)
-			}
-		case collector.Cosmos:
-			moduleCollector, err = NewCosmosSchedulerCollector(node, currencyRegistry)
-			if err != nil {
-				return nil, fmt.Errorf("failed to create Cosmos collector for node %s: %w", node.Name, err)
-			}
-		default:
-			return nil, fmt.Errorf("unsupported module %s for node %s", node.Module, node.Name)
+		promCollector, err := collector.NewCollector(*node, currencyRegistry)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create collector for node %s: %w", node.Name, err)
 		}
-
+		moduleCollector, ok := promCollector.(collector.IModuleCollector)
+		if !ok {
+			return nil, fmt.Errorf("collector for node %s does not implement IModuleCollector", node.Name)
+		}
 		collectors[node.Name] = moduleCollector
 	}
 
@@ -148,164 +117,6 @@ func NewRefundScheduler(cfg *config.Schema, currencyRegistry *currency.Registry)
 	}
 
 	return scheduler, nil
-}
-
-// EVMSchedulerCollector implements ModuleCollector for EVM chains
-type EVMSchedulerCollector struct {
-	nodeName         string
-	client           *ethclient.Client
-	unit             *currency.Unit
-	metricsUnit      *currency.Unit
-	currencyRegistry *currency.Registry
-}
-
-// NewEVMSchedulerCollector creates a new EVM collector for the scheduler
-func NewEVMSchedulerCollector(nodeConfig *config.Node, currencyRegistry *currency.Registry) (*EVMSchedulerCollector, error) {
-	// Configure TLS based on node configuration
-	tlsConfig := &tls.Config{InsecureSkipVerify: nodeConfig.HttpSSLVerify == "false"}
-	httpClient := &http.Client{
-		Transport: &http.Transport{TLSClientConfig: tlsConfig},
-		Timeout:   10 * time.Second,
-	}
-
-	// Setup RPC client with optional authorization
-	rpcClient, err := rpc.DialOptions(context.Background(), nodeConfig.HttpAddr, rpc.WithHTTPClient(httpClient), rpc.WithHTTPAuth(func(h http.Header) error {
-		if auth := nodeConfig.Authorization; auth != nil {
-			h.Set("Authorization", fmt.Sprintf("Basic %s", auth.Username+":"+auth.Password))
-		}
-		return nil
-	}))
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to ethereum node: %w", err)
-	}
-
-	return &EVMSchedulerCollector{
-		nodeName:         nodeConfig.Name,
-		client:           ethclient.NewClient(rpcClient),
-		unit:             nodeConfig.Unit,
-		metricsUnit:      nodeConfig.MetricsUnit,
-		currencyRegistry: currencyRegistry,
-	}, nil
-}
-
-func (ec *EVMSchedulerCollector) CollectAccountBalance(ctx context.Context, account *config.Account) (*collector.BaseResult, error) {
-	address := common.HexToAddress(account.Address)
-	balance, err := ec.client.BalanceAt(ctx, address, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get balance for %s: %w", account.Address, err)
-	}
-
-	// Convert using currency package
-	amount := new(big.Float).SetInt(balance)
-	if amount.IsInf() {
-		return nil, fmt.Errorf("balance for %s too large for float64 representation", account.Address)
-	}
-
-	floatVal, _ := amount.Float64() // This is always wei from blockchain
-	logger.Debugf("Raw blockchain balance for %s: %.0f wei", account.Address, floatVal)
-
-	var converted float64
-
-	if ec.currencyRegistry != nil {
-		// Convert from blockchain native unit (wei) to the configured metricsUnit
-		converted, err = ec.currencyRegistry.Convert(floatVal, "wei", ec.metricsUnit.Name)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert balance: %w", err)
-		}
-		logger.Debugf("Converted balance for %s: %.0f wei -> %.6f %s", account.Address, floatVal, converted, ec.metricsUnit.Name)
-	} else {
-		converted = floatVal
-		logger.Debugf("No currency registry, using raw value for %s: %.0f", account.Address, converted)
-	}
-
-	return &collector.BaseResult{
-		NodeName: ec.nodeName,
-		Account:  *account,
-		Value:    converted,
-		Health:   1.0,
-	}, nil
-}
-
-func (ec *EVMSchedulerCollector) Close() error {
-	if ec.client != nil {
-		ec.client.Close()
-	}
-	return nil
-}
-
-// CosmosSchedulerCollector implements ModuleCollector for Cosmos chains
-type CosmosSchedulerCollector struct {
-	nodeName         string
-	conn             *grpc.ClientConn
-	client           banktypes.QueryClient
-	unit             *currency.Unit
-	metricsUnit      *currency.Unit
-	currencyRegistry *currency.Registry
-}
-
-// NewCosmosSchedulerCollector creates a new Cosmos collector for the scheduler
-func NewCosmosSchedulerCollector(node *config.Node, currencyRegistry *currency.Registry) (*CosmosSchedulerCollector, error) {
-	// Create a connection to the gRPC server
-	grpcAddr := strings.TrimPrefix(node.GrpcAddr, "grpc://")
-	conn, err := grpc.NewClient(
-		grpcAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
-			return net.DialTimeout("tcp", addr, 10*time.Second)
-		}),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to cosmos node: %w", err)
-	}
-
-	return &CosmosSchedulerCollector{
-		nodeName:         node.Name,
-		conn:             conn,
-		client:           banktypes.NewQueryClient(conn),
-		unit:             node.Unit,
-		metricsUnit:      node.MetricsUnit,
-		currencyRegistry: currencyRegistry,
-	}, nil
-}
-
-func (cc *CosmosSchedulerCollector) CollectAccountBalance(ctx context.Context, account *config.Account) (*collector.BaseResult, error) {
-	req := &banktypes.QueryBalanceRequest{
-		Address: account.Address,
-		Denom:   cc.unit.Name,
-	}
-
-	balance, err := cc.client.Balance(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get balance for %s: %w", account.Address, err)
-	}
-
-	// Convert to big.Float first
-	amount := new(big.Float).SetInt(balance.Balance.Amount.BigInt())
-	if amount.IsInf() {
-		return nil, fmt.Errorf("balance for %s exceeds float64 range", account.Address)
-	}
-
-	totalValue, _ := amount.Float64()
-
-	// Convert to target unit
-	convertedValue, err := cc.currencyRegistry.Convert(totalValue, cc.unit.Name, cc.metricsUnit.Name)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert balance for %s: %w", account.Address, err)
-	}
-
-	return &collector.BaseResult{
-		NodeName: cc.nodeName,
-		Account:  *account,
-		Value:    convertedValue,
-		Health:   1.0,
-	}, nil
-}
-
-func (cc *CosmosSchedulerCollector) Close() error {
-	if cc.conn != nil {
-		return cc.conn.Close()
-	}
-	return nil
 }
 
 // Start starts the refund scheduler
@@ -401,7 +212,7 @@ func (rs *RefundScheduler) processAccounts() []*RefundEvent {
 
 	// Process each node
 	for _, node := range rs.config.Nodes {
-		collector, exists := rs.collectors[node.Name]
+		metricsCollector, exists := rs.collectors[node.Name]
 		if !exists {
 			logger.Errorf("No collector found for node %s", node.Name)
 			continue
@@ -415,13 +226,13 @@ func (rs *RefundScheduler) processAccounts() []*RefundEvent {
 			}
 
 			wg.Add(1)
-			go func(n *config.Node, acc *config.Account, col ModuleCollector) {
+			go func(n *config.Node, acc *config.Account, col collector.IModuleCollector) {
 				defer wg.Done()
 				event := rs.processAccount(n, acc, col)
 				if event != nil {
 					eventChan <- event // Now guaranteed to never block!
 				}
-			}(node, account, collector)
+			}(node, account, metricsCollector)
 		}
 	}
 
@@ -440,7 +251,7 @@ func (rs *RefundScheduler) processAccounts() []*RefundEvent {
 }
 
 // processAccount processes a single account for refunding
-func (rs *RefundScheduler) processAccount(node *config.Node, account *config.Account, collector ModuleCollector) *RefundEvent {
+func (rs *RefundScheduler) processAccount(node *config.Node, account *config.Account, collector collector.IModuleCollector) *RefundEvent {
 	ctx, cancel := context.WithTimeout(rs.ctx, 30*time.Second)
 	defer cancel()
 
@@ -541,13 +352,12 @@ func (rs *RefundScheduler) processAccount(node *config.Node, account *config.Acc
 		refundAmountDisplay = refundAmountWei // fallback to wei
 	}
 
-	event = &RefundEvent{
-		RefundAmount: refundAmountWei,
-		AmountWei:    refundAmountWei,
-		SourceUnit:   "wei",
-		Threshold:    *account.RefundThreshold,
-		TargetAmount: *account.RefundTarget,
-	}
+	// Update event with refund details
+	event.RefundAmount = refundAmountWei
+	event.AmountWei = refundAmountWei
+	event.SourceUnit = "wei"
+	event.Threshold = *account.RefundThreshold
+	event.TargetAmount = *account.RefundTarget
 
 	logger.Infof("Account %s balance %.6f %s (%.0f wei) is below threshold %.6f %s, refunding %.6f %s (%.0f wei) to reach target %.6f %s",
 		account.Name, currentBalanceDisplay, collectorUnit, currentBalanceWei, *account.RefundThreshold, collectorUnit,
@@ -563,16 +373,15 @@ func (rs *RefundScheduler) processAccount(node *config.Node, account *config.Acc
 		return event
 	}
 
-	event = &RefundEvent{
-		Session:     faucetResult.Session,
-		Status:      faucetResult.Status,
-		ClaimStatus: faucetResult.ClaimStatus,
-		ClaimHash:   faucetResult.ClaimHash,
-		ClaimBlock:  faucetResult.ClaimBlock,
-		Confirmed:   faucetResult.Confirmed,
-		Success:     faucetResult.Success,
-		Duration:    time.Since(startTime),
-	}
+	// Update event with faucet result
+	event.Session = faucetResult.Session
+	event.Status = faucetResult.Status
+	event.ClaimStatus = faucetResult.ClaimStatus
+	event.ClaimHash = faucetResult.ClaimHash
+	event.ClaimBlock = faucetResult.ClaimBlock
+	event.Confirmed = faucetResult.Confirmed
+	event.Success = faucetResult.Success
+	event.Duration = time.Since(startTime)
 
 	if faucetResult.Success {
 		logMsg := fmt.Sprintf("Successfully refunded account %s with %.6f %s (%.0f wei), session: %s, status: %s, claim status: %s",
@@ -625,4 +434,11 @@ func (rs *RefundScheduler) convertFromWei(amountWei float64, targetUnit string) 
 		return amountWei, nil
 	}
 	return rs.currencyRegistry.Convert(amountWei, "wei", targetUnit)
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

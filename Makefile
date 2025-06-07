@@ -33,7 +33,7 @@ test-lint:
 test:
 ifeq ($(ENV), local)
 	${GO_MOD_TIDY}
-	${GO_TEST_COVERPROFILE} coverage.txt  ./pkg/collector/... ./pkg/config/... ./pkg/currency/...
+	${GO_TEST_COVERPROFILE} coverage.txt  ./pkg/collector/... ./pkg/config/... ./pkg/currency/... ./pkg/scheduler/...
 	${GO_TOOL_COVER} -func coverage.txt
 else
 	$(error ENV ${ENV} not found)	

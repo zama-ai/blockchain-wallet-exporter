@@ -11,7 +11,7 @@ on:
       - main
 
 env:
-  golang-version: '1.22'
+  golang-version: '1.23'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 jobs:
