@@ -6,7 +6,7 @@ global:
   # Auto-refund configuration (optional)
   autoRefund:
     enabled: true
-    schedule: "@every 1m"  # Every 5 minutes (cron format)
+    schedule: "@every 1m"  # Every 1 minute
     faucetUrl: "http://localhost:8080"
     # faucetUrlEnv: "FAUCET_URL"  # Override from environment variable
     timeout: 30  # Timeout in seconds for faucet operations

@@ -1,4 +1,4 @@
-TAG?=v0.1.0
+TAG?=v0.1.4-rc1
 DATE?=$(shell date +%Y-%m-%d-%H:%M:%S)
 COMMIT?=$(shell git rev-parse HEAD)
 PACKAGE?= github.com/zama-ai/blockchain-wallet-exporter/pkg/version
