@@ -19,9 +19,6 @@ type Global struct {
 	MetricsAddr string `yaml:"metricsAddr"`
 	LogLevel    string `yaml:"logLevel"`
 
-	// Auto-refund scheduler configuration
-	AutoRefund *AutoRefund `yaml:"autoRefund"`
-
 	// TODO: add ssl config
 	SSL *SSL `yaml:"ssl"`
 }
@@ -55,16 +52,12 @@ type Node struct {
 	Accounts      []*Account        `yaml:"accounts"`
 	Labels        map[string]string `yaml:"labels"`
 	Authorization *Authorization    `yaml:"authorization"`
+
+	// Auto-refund scheduler configuration for this node
+	AutoRefund *AutoRefund `yaml:"autoRefund"`
 }
 
 func (s *Schema) Normalize() error {
-	// Normalize global auto-refund settings
-	if s.Global.AutoRefund != nil {
-		if err := s.Global.AutoRefund.Normalize(); err != nil {
-			return fmt.Errorf("failed to normalize auto-refund config: %w", err)
-		}
-	}
-
 	for _, node := range s.Nodes {
 		if err := node.Normalize(); err != nil {
 			return fmt.Errorf("failed to normalize node %s: %w", node.Name, err)
@@ -88,6 +81,14 @@ func (n *Node) Normalize() error {
 			n.HttpAddr = envValue
 		}
 	}
+
+	// Normalize node-level auto-refund settings
+	if n.AutoRefund != nil {
+		if err := n.AutoRefund.Normalize(); err != nil {
+			return fmt.Errorf("failed to normalize node auto-refund config: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -148,4 +149,22 @@ func ReadConfigWithError(r io.Reader) (*Schema, error) {
 		return nil, fmt.Errorf("failed to normalize config: %w", err)
 	}
 	return config, nil
+}
+
+// HasRefundEnabledAccounts returns true if this node has any accounts configured for auto-refund
+func (n *Node) HasRefundEnabledAccounts() bool {
+	for _, account := range n.Accounts {
+		if account.RefundThreshold != nil && account.RefundTarget != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// IsAutoRefundEnabled returns true if this node has auto-refund enabled and properly configured
+func (n *Node) IsAutoRefundEnabled() bool {
+	return n.AutoRefund != nil &&
+		n.AutoRefund.Enabled &&
+		n.AutoRefund.FaucetURL != "" &&
+		n.HasRefundEnabledAccounts()
 }
