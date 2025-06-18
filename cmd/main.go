@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
-	"github.com/zama-ai/blockchain-wallet-exporter/pkg/faucet"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/scheduler"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/version"
@@ -60,27 +58,35 @@ func main() {
 	// Initialize prometheus registry
 	promRegistry := prometheus.NewRegistry()
 
-	// Initialize auto-refund scheduler if enabled
-	var refundScheduler *scheduler.RefundScheduler
-	if config.Global.AutoRefund != nil && config.Global.AutoRefund.Enabled {
-		logger.Infof("Auto-refund is enabled, initializing scheduler...")
-		faucetTimeout := time.Duration(config.Global.AutoRefund.Timeout) * time.Second
-		faucetClient := faucet.NewClient(config.Global.AutoRefund.FaucetURL, faucetTimeout)
-		refundScheduler, err = scheduler.NewRefundScheduler(config, currencyRegistry, faucetClient)
+	// Initialize auto-refund scheduler manager
+	var schedulerManager *scheduler.SchedulerManager
+
+	// Check if any node has auto-refund enabled
+	autoRefundEnabled := false
+	for _, node := range config.Nodes {
+		if node.IsAutoRefundEnabled() {
+			autoRefundEnabled = true
+			break
+		}
+	}
+
+	if autoRefundEnabled {
+		logger.Infof("Auto-refund is enabled on one or more nodes, initializing scheduler manager...")
+		schedulerManager, err = scheduler.NewSchedulerManager(config, currencyRegistry)
 		if err != nil {
-			logger.Fatalf("Failed to create refund scheduler: %v", err)
+			logger.Fatalf("Failed to create scheduler manager: %v", err)
 		}
 
-		// Start scheduler in a separate goroutine
+		// Start scheduler manager in a separate goroutine
 		go func() {
-			if err := refundScheduler.Start(); err != nil {
-				logger.Fatalf("Failed to start refund scheduler: %v", err)
+			if err := schedulerManager.Start(); err != nil {
+				logger.Fatalf("Failed to start scheduler manager: %v", err)
 			}
 		}()
 
-		logger.Infof("Auto-refund scheduler started with schedule: %s", config.Global.AutoRefund.Schedule)
+		logger.Infof("Auto-refund scheduler manager initialized")
 	} else {
-		logger.Infof("Auto-refund is disabled")
+		logger.Infof("Auto-refund is disabled - no nodes have autoRefund configured")
 	}
 
 	// Bootstrap Server with both registries
@@ -100,11 +106,11 @@ func main() {
 	// Graceful shutdown
 	logger.Infof("Shutting down...")
 
-	// Stop scheduler first
-	if refundScheduler != nil {
-		logger.Infof("Stopping auto-refund scheduler...")
-		if err := refundScheduler.Stop(); err != nil {
-			logger.Errorf("Failed to stop refund scheduler: %v", err)
+	// Stop scheduler manager first
+	if schedulerManager != nil {
+		logger.Infof("Stopping auto-refund scheduler manager...")
+		if err := schedulerManager.Stop(); err != nil {
+			logger.Errorf("Failed to stop scheduler manager: %v", err)
 		}
 	}
 

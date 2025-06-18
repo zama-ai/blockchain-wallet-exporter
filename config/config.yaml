@@ -3,78 +3,74 @@ global:
   metricsAddr: ":9091"
   logLevel: debug
   
-  # Auto-refund configuration (optional)
-  autoRefund:
-    enabled: true
-    schedule: "@every 1m"  # Every 1 minute
-    faucetUrl: "http://localhost:8080"
-    # faucetUrlEnv: "FAUCET_URL"  # Override from environment variable
-    timeout: 30  # Timeout in seconds for faucet operations
-  
-  # TODO: support allow failure mode
-  #allowFailure: true
 
   #ssl:
   #  enabled: false
   #  certFile: ""
   #  keyFile: ""
 
-
-
-# 4 connector
-# 1 validator
-# 1 gateway (fhevm)
-# 1 gateway (kms)
-
+# Per-node scheduler configuration - no global fallback
 nodes:
-  - name: gateway
+  # Gateway node with explicit autoRefund configuration
+  - name: l2-gateway
     module: evm
     httpAddr: "https://l2-gateway-node-zws-dev-http.diplodocus-boa.ts.net"
     
-    # httpAddrEnv can be used to override the httpAddr from the environment variable
-    # httpAddrEnv: "FHEVM_1_HTTP_ADDR"
-
-    # unit can be wei, gwei, eth
-    unit: eth
+    # Explicit auto-refund configuration for this node
+    autoRefund:
+      enabled: true
+      schedule: "@every 1m"  # Frequent checks for gateway
+      faucetUrl: "http://localhost:8080"  # Gateway-specific faucet
+      timeout: 30
+    
+    unit: wei          # Native blockchain unit
+    metricsUnit: eth   # Human-readable unit for metrics and comparisons
     httpSSLVerify: false
-    #authorization:
-    #  username: "kms"
-    #  password: "kms"
     accounts:
-      - address: "0x9A39172023014032287A2Baf52E5869b0a934EB3"
-        # envAddress can be used to override the address from the environment variable
-        # envAddress: "FHEVM_1_ADDRESS"
-        name: test
-        # Auto-refund configuration for this account
-        refundThreshold: 1.1
-        refundTarget: 1.2
+      - address: "0xfcD843C3Bf1Dd5Aa3Bd78cdD3e0E28A34ef2fDaE"
+        name: test-1-l2
+        # Auto-refund thresholds for this account
+        refundThreshold: 0.8  # Trigger refund when balance below refundThreshold to reach refundTarget 
+        refundTarget: 1.2     
 
-      # - address: "0x1BF621Aa9ceE3F6154881c25041bB39AEd4ca7Cc"
-      #   # envAddress can be used to override the address from the environment variable
-      #   # envAddress: "FHEVM_2_ADDRESS"
-      #   name: fhevm-2
-      #   # Different thresholds for different accounts
-      #   refundThreshold: 0.05  # Trigger refund when balance is below 0.05 gwei
-      #   refundTarget: 0.5      # Refund to reach 0.5 gwei
-      # - name: fhevm-3-env
-      #   addressEnv: "FHEVM_3_ADDRESS" # Environment variable name
-
-      # Demo with invalid address (no auto-refund configured)
-      #- address: "0xc361fc33b99F88612257ac8cc2D852A5CEe0E217"
-      #  name: invalid-address
+      - address: "0xb3e3EE7CE48eEb7342CEa47B0d2296F5c3D67624"
+        name: test-2-l2
+        # Different thresholds for backup account
+        refundThreshold: 1.3  # Lower threshold for backup
+        refundTarget: 1.6     # Lower target for backup
 
     labels:
-      app: gateway-fhevm
+      app: l2-gateway
       env: test
-  #- name: gateway
-  #  module: evm
-  #  httpAddr: "https://ethereum-mainnet.rpc.starton.com"
-  #  httpSSLVerify: false
-  #  accounts:
-  #    - address: "0xaF3960e040591bea674677dF567c649258962c22"
-  #      name: fhevm-1
-  #    - address: "0x1BF621Aa9ceE3F6154881c25041bB39AEd4ca7Cc"
-  #      name: fhevm-2
-  #  labels:
-  #    app: gateway-fhevm
-  #    env: test
+
+  # Host node with explicit autoRefund configuration
+  - name: l1-host
+    module: evm
+    httpAddr: "https://l1-eth-node-zws-dev-http.diplodocus-boa.ts.net"
+    
+    # Explicit auto-refund configuration for this node
+    autoRefund:
+      enabled: true
+      schedule: "@every 1m"  # Frequent checks for host
+      faucetUrl: "http://localhost:8081"  # Gateway-specific faucet
+      timeout: 30
+    
+    unit: wei          # Native blockchain unit
+    metricsUnit: eth   # Human-readable unit for metrics and comparisons
+    httpSSLVerify: false
+    accounts:
+      - address: "0xfcD843C3Bf1Dd5Aa3Bd78cdD3e0E28A34ef2fDaE"
+        name: test-1-l1
+        # Auto-refund thresholds for this account
+        refundThreshold: 1.3  # Trigger refund when balance below refundThreshold to reach refundTarget
+        refundTarget: 1.6     
+
+      - address: "0xb3e3EE7CE48eEb7342CEa47B0d2296F5c3D67624"
+        name: test-2-l1
+        # Different thresholds for backup account
+        refundThreshold: 1.7  # Lower threshold for backup
+        refundTarget: 2.0     # Lower target for backup
+
+    labels:
+      app: l1-host
+      env: test

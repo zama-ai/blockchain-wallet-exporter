@@ -20,10 +20,10 @@ const (
 
 // RefundScheduler manages automatic account refunding based on balance thresholds
 type RefundScheduler struct {
-	config           *config.Schema
+	node             *config.Node
 	faucetClient     faucet.Fauceter
 	currencyRegistry *currency.Registry
-	collectors       map[string]collector.IModuleCollector
+	collector        collector.IModuleCollector
 	cron             *cron.Cron
 
 	// Pre-calculated buffer size for event channel
@@ -59,58 +59,41 @@ type RefundEvent struct {
 	Duration       time.Duration
 }
 
-// NewRefundScheduler creates a new refund scheduler
-func NewRefundScheduler(cfg *config.Schema, currencyRegistry *currency.Registry, faucetClient faucet.Fauceter) (*RefundScheduler, error) {
-	if cfg.Global.AutoRefund == nil || !cfg.Global.AutoRefund.Enabled {
-		return nil, fmt.Errorf("auto-refund is not enabled in configuration")
-	}
+// logPrefix returns a consistent log prefix for this scheduler
+func (rs *RefundScheduler) logPrefix() string {
+	return fmt.Sprintf("[scheduler %s]", rs.node.Name)
+}
 
-	if cfg.Global.AutoRefund.FaucetURL == "" {
-		return nil, fmt.Errorf("faucet URL is required for auto-refund")
-	}
-
-	// Note: Faucet unit validation removed - faucet now only accepts wei amounts
-	// All currency conversion is handled in the scheduler
-
-	// Create collectors for each node
-	collectors := make(map[string]collector.IModuleCollector)
-	for _, node := range cfg.Nodes {
-		promCollector, err := collector.NewCollector(*node, currencyRegistry)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create collector for node %s: %w", node.Name, err)
-		}
-		moduleCollector, ok := promCollector.(collector.IModuleCollector)
-		if !ok {
-			return nil, fmt.Errorf("collector for node %s does not implement IModuleCollector", node.Name)
-		}
-		collectors[node.Name] = moduleCollector
+// NewNodeRefundScheduler creates a refund scheduler for a specific node
+func NewNodeRefundScheduler(node *config.Node, currencyRegistry *currency.Registry, faucetClient faucet.Fauceter, nodeCollector collector.IModuleCollector) (*RefundScheduler, error) {
+	// Validate that the node has autoRefund properly configured
+	if !node.IsAutoRefundEnabled() {
+		return nil, fmt.Errorf("auto-refund is not enabled or properly configured for node %s", node.Name)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Calculate buffer size based on refund-enabled accounts
+	// Calculate buffer size based on refund-enabled accounts for this node only
 	refundAccountCount := 0
-	for _, node := range cfg.Nodes {
-		for _, account := range node.Accounts {
-			if account.RefundThreshold != nil && account.RefundTarget != nil {
-				refundAccountCount++
-			}
+	for _, account := range node.Accounts {
+		if account.RefundThreshold != nil && account.RefundTarget != nil {
+			refundAccountCount++
 		}
 	}
 
 	// Set buffer size with sensible minimum
-	eventBufferSize := max(refundAccountCount, MAX_BUFFER_SIZE)
+	eventBufferSize := max(refundAccountCount, 10) // Smaller buffer for single node
 
-	logger.Infof("Auto-refund scheduler configured for %d accounts with event buffer size %d",
-		refundAccountCount, eventBufferSize)
+	logger.Debugf("[scheduler %s] Node-specific scheduler configured for %d accounts with event buffer size %d",
+		node.Name, refundAccountCount, eventBufferSize)
 
 	scheduler := &RefundScheduler{
-		config:           cfg,
+		node:             node,
 		faucetClient:     faucetClient,
 		currencyRegistry: currencyRegistry,
-		collectors:       collectors,
+		collector:        nodeCollector,
 		cron:             cron.New(cron.WithSeconds()),
-		eventBufferSize:  eventBufferSize, // Store pre-calculated size
+		eventBufferSize:  eventBufferSize,
 		stopChan:         make(chan struct{}),
 		ctx:              ctx,
 		cancel:           cancel,
@@ -128,10 +111,10 @@ func (rs *RefundScheduler) Start() error {
 		return fmt.Errorf("scheduler is already running")
 	}
 
-	logger.Infof("Starting auto-refund scheduler with schedule: %s", rs.config.Global.AutoRefund.Schedule)
+	logger.Infof("%s Starting auto-refund scheduler with schedule: %s", rs.logPrefix(), rs.node.AutoRefund.Schedule)
 
 	// Add cron job
-	_, err := rs.cron.AddFunc(rs.config.Global.AutoRefund.Schedule, func() {
+	_, err := rs.cron.AddFunc(rs.node.AutoRefund.Schedule, func() {
 		rs.executeRefundCheck()
 	})
 	if err != nil {
@@ -141,7 +124,7 @@ func (rs *RefundScheduler) Start() error {
 	rs.cron.Start()
 	rs.running = true
 
-	logger.Infof("Auto-refund scheduler started successfully")
+	logger.Infof("%s Auto-refund scheduler started successfully", rs.logPrefix())
 	return nil
 }
 
@@ -154,7 +137,7 @@ func (rs *RefundScheduler) Stop() error {
 		return nil
 	}
 
-	logger.Infof("Stopping auto-refund scheduler...")
+	logger.Infof("%s Stopping auto-refund scheduler...", rs.logPrefix())
 
 	// Stop cron scheduler
 	ctx := rs.cron.Stop()
@@ -164,21 +147,19 @@ func (rs *RefundScheduler) Stop() error {
 	rs.cancel()
 	close(rs.stopChan)
 
-	// Close all collectors
-	for nodeName, collector := range rs.collectors {
-		if err := collector.Close(); err != nil {
-			logger.Errorf("Failed to close collector for node %s: %v", nodeName, err)
-		}
+	// Close collector
+	if err := rs.collector.Close(); err != nil {
+		logger.Errorf("%s Failed to close collector: %v", rs.logPrefix(), err)
 	}
 
 	rs.running = false
-	logger.Infof("Auto-refund scheduler stopped")
+	logger.Infof("%s Auto-refund scheduler stopped", rs.logPrefix())
 	return nil
 }
 
 // executeRefundCheck performs the main refund check logic
 func (rs *RefundScheduler) executeRefundCheck() {
-	logger.Infof("Starting auto-refund check cycle")
+	logger.Infof("%s Starting auto-refund check cycle", rs.logPrefix())
 	startTime := time.Now()
 
 	events := rs.processAccounts()
@@ -198,8 +179,8 @@ func (rs *RefundScheduler) executeRefundCheck() {
 	}
 
 	duration := time.Since(startTime)
-	logger.Infof("Auto-refund check completed in %v: %d successful, %d errors, %.0f wei total refunded",
-		duration, successCount, errorCount, totalRefunded)
+	logger.Infof("%s Auto-refund check completed in %v: %d successful, %d errors, %.0f wei total refunded",
+		rs.logPrefix(), duration, successCount, errorCount, totalRefunded)
 }
 
 // processAccounts checks all accounts and refunds those below threshold
@@ -210,30 +191,21 @@ func (rs *RefundScheduler) processAccounts() []*RefundEvent {
 	// Use pre-calculated buffer size - no more deadlocks!
 	eventChan := make(chan *RefundEvent, rs.eventBufferSize)
 
-	// Process each node
-	for _, node := range rs.config.Nodes {
-		metricsCollector, exists := rs.collectors[node.Name]
-		if !exists {
-			logger.Errorf("No collector found for node %s", node.Name)
+	// Process each account in the node
+	for _, account := range rs.node.Accounts {
+		if account.RefundThreshold == nil || account.RefundTarget == nil {
+			logger.Debugf("%s Skipping account %s - no refund configuration", rs.logPrefix(), account.Name)
 			continue
 		}
 
-		// Process each account in the node
-		for _, account := range node.Accounts {
-			if account.RefundThreshold == nil || account.RefundTarget == nil {
-				logger.Debugf("Skipping account %s - no refund configuration", account.Name)
-				continue
+		wg.Add(1)
+		go func(acc *config.Account) {
+			defer wg.Done()
+			event := rs.processAccount(acc)
+			if event != nil {
+				eventChan <- event // Now guaranteed to never block!
 			}
-
-			wg.Add(1)
-			go func(n *config.Node, acc *config.Account, col collector.IModuleCollector) {
-				defer wg.Done()
-				event := rs.processAccount(n, acc, col)
-				if event != nil {
-					eventChan <- event // Now guaranteed to never block!
-				}
-			}(node, account, metricsCollector)
-		}
+		}(account)
 	}
 
 	// Wait for all goroutines to complete
@@ -251,104 +223,105 @@ func (rs *RefundScheduler) processAccounts() []*RefundEvent {
 }
 
 // processAccount processes a single account for refunding
-func (rs *RefundScheduler) processAccount(node *config.Node, account *config.Account, collector collector.IModuleCollector) *RefundEvent {
+func (rs *RefundScheduler) processAccount(account *config.Account) *RefundEvent {
 	ctx, cancel := context.WithTimeout(rs.ctx, 30*time.Second)
 	defer cancel()
 
 	startTime := time.Now()
 	event := &RefundEvent{
-		NodeName:       node.Name,
+		NodeName:       rs.node.Name,
 		AccountName:    account.Name,
 		AccountAddress: account.Address,
 		Timestamp:      startTime,
 	}
 
-	// Get current balance (returned in metricsUnit, expecting wei based on configuration)
-	result, err := collector.CollectAccountBalance(ctx, account)
+	// Get current balance (returned in metricsUnit after conversion from blockchain's native unit)
+	// For EVM: blockchain returns wei, collector converts to metricsUnit (e.g., eth for human readability)
+	result, err := rs.collector.CollectAccountBalance(ctx, account)
 	if err != nil {
 		event.Error = fmt.Errorf("failed to get balance: %w", err)
 		event.Duration = time.Since(startTime)
-		logger.Errorf("Failed to get balance for account %s: %v", account.Name, err)
+		logger.Errorf("%s Failed to get balance for account %s: %v", rs.logPrefix(), account.Name, err)
 		return event
 	}
 
 	if result.Health <= 0 {
 		event.Error = fmt.Errorf("account health check failed")
 		event.Duration = time.Since(startTime)
-		logger.Errorf("Health check failed for account %s", account.Name)
+		logger.Errorf("%s Health check failed for account %s", rs.logPrefix(), account.Name)
 		return event
 	}
 
-	logger.Debugf("Collector returned balance for %s: %.0f (raw value)", account.Name, result.Value)
+	logger.Debugf("%s Collector returned balance for %s: %.6f (in metricsUnit)", rs.logPrefix(), account.Name, result.Value)
 	event.CurrentBalance = result.Value
 
-	// Determine the unit that the collector returned (metricsUnit)
+	// Determine the unit that the collector returned (should be metricsUnit after conversion)
 	collectorUnit := "eth" // Default fallback
-	if node.MetricsUnit != nil && node.MetricsUnit.Name != "" {
-		collectorUnit = node.MetricsUnit.Name
-	} else if node.Unit != nil && node.Unit.Name != "" {
-		collectorUnit = node.Unit.Name
+	if rs.node.MetricsUnit != nil && rs.node.MetricsUnit.Name != "" {
+		collectorUnit = rs.node.MetricsUnit.Name
+	} else if rs.node.Unit != nil && rs.node.Unit.Name != "" {
+		collectorUnit = rs.node.Unit.Name
 	}
 
-	logger.Debugf("Collector unit determined as: %s", collectorUnit)
+	logger.Debugf("%s Collector unit determined as: %s", rs.logPrefix(), collectorUnit)
 
 	// Convert threshold and target from config unit to wei for faucet
 	thresholdWei, err := rs.convertToWei(*account.RefundThreshold, collectorUnit)
 	if err != nil {
 		event.Error = fmt.Errorf("failed to convert threshold to wei: %w", err)
 		event.Duration = time.Since(startTime)
-		logger.Errorf("Failed to convert threshold to wei for account %s: %v", account.Name, err)
+		logger.Errorf("%s Failed to convert threshold to wei for account %s: %v", rs.logPrefix(), account.Name, err)
 		return event
 	}
-	logger.Debugf("Threshold conversion: %.6f %s -> %.0f wei", *account.RefundThreshold, collectorUnit, thresholdWei)
+	logger.Debugf("%s Threshold conversion: %.6f %s -> %.0f wei", rs.logPrefix(), *account.RefundThreshold, collectorUnit, thresholdWei)
 
 	targetWei, err := rs.convertToWei(*account.RefundTarget, collectorUnit)
 	if err != nil {
 		event.Error = fmt.Errorf("failed to convert target to wei: %w", err)
 		event.Duration = time.Since(startTime)
-		logger.Errorf("Failed to convert target to wei for account %s: %v", account.Name, err)
+		logger.Errorf("%s Failed to convert target to wei for account %s: %v", rs.logPrefix(), account.Name, err)
 		return event
 	}
-	logger.Debugf("Target conversion: %.6f %s -> %.0f wei", *account.RefundTarget, collectorUnit, targetWei)
+	logger.Debugf("%s Target conversion: %.6f %s -> %.0f wei", rs.logPrefix(), *account.RefundTarget, collectorUnit, targetWei)
 
 	// Convert collector balance to wei for comparison
 	currentBalanceWei, err := rs.convertToWei(result.Value, collectorUnit)
 	if err != nil {
 		event.Error = fmt.Errorf("failed to convert current balance to wei: %w", err)
 		event.Duration = time.Since(startTime)
-		logger.Errorf("Failed to convert current balance to wei for account %s: %v", account.Name, err)
+		logger.Errorf("%s Failed to convert current balance to wei for account %s: %v", rs.logPrefix(), account.Name, err)
 		return event
 	}
-	logger.Debugf("Balance conversion: %.0f %s -> %.0f wei", result.Value, collectorUnit, currentBalanceWei)
+	logger.Debugf("%s Balance conversion: %.6f %s -> %.0f wei", rs.logPrefix(), result.Value, collectorUnit, currentBalanceWei)
 
 	// Update event with wei amount
 	event.CurrentBalance = currentBalanceWei
 
 	// Compare in wei
 	if currentBalanceWei >= thresholdWei {
-		logger.Debugf("Account %s balance %.6f %s (%.0f wei) is above threshold %.6f %s (%.0f wei), no refund needed",
-			account.Name, result.Value, collectorUnit, currentBalanceWei, *account.RefundThreshold, collectorUnit, thresholdWei)
+		logger.Debugf("%s Account %s balance %.6f %s (%.0f wei) is above threshold %.6f %s (%.0f wei), no refund needed",
+			rs.logPrefix(), account.Name, result.Value, collectorUnit, currentBalanceWei, *account.RefundThreshold, collectorUnit, thresholdWei)
 		return nil
 	}
 
 	// Calculate refund amount in wei
 	refundAmountWei := targetWei - currentBalanceWei
 	if refundAmountWei <= 0 {
-		logger.Warnf("Invalid refund amount %.0f wei for account %s", refundAmountWei, account.Name)
+		logger.Warnf("%s Invalid refund amount %.0f wei for account %s", rs.logPrefix(), refundAmountWei, account.Name)
 		return nil
 	}
-	logger.Debugf("Refund calculation: %.0f (target) - %.0f (current) = %.0f wei", targetWei, currentBalanceWei, refundAmountWei)
+	logger.Debugf("%s Refund calculation: %.0f (target) - %.0f (current) = %.0f wei", rs.logPrefix(), targetWei, currentBalanceWei, refundAmountWei)
 
 	// Convert values to human-readable units for display purposes only
 	currentBalanceDisplay, err := rs.convertFromWei(currentBalanceWei, collectorUnit)
 	if err != nil {
-		logger.Warnf("Failed to convert current balance for display: %v", err)
+		logger.Warnf("%s Failed to convert current balance for display: %v", rs.logPrefix(), err)
 		currentBalanceDisplay = currentBalanceWei // fallback to wei
 	}
 
 	refundAmountDisplay, err := rs.convertFromWei(refundAmountWei, collectorUnit)
 	if err != nil {
-		logger.Warnf("Failed to convert refund amount for display: %v", err)
+		logger.Warnf("%s Failed to convert refund amount for display: %v", rs.logPrefix(), err)
 		refundAmountDisplay = refundAmountWei // fallback to wei
 	}
 
@@ -359,17 +332,17 @@ func (rs *RefundScheduler) processAccount(node *config.Node, account *config.Acc
 	event.Threshold = *account.RefundThreshold
 	event.TargetAmount = *account.RefundTarget
 
-	logger.Infof("Account %s balance %.6f %s (%.0f wei) is below threshold %.6f %s, refunding %.6f %s (%.0f wei) to reach target %.6f %s",
-		account.Name, currentBalanceDisplay, collectorUnit, currentBalanceWei, *account.RefundThreshold, collectorUnit,
+	logger.Infof("%s Account %s balance %.6f %s (%.0f wei) is below threshold %.6f %s, refunding %.6f %s (%.0f wei) to reach target %.6f %s",
+		rs.logPrefix(), account.Name, currentBalanceDisplay, collectorUnit, currentBalanceWei, *account.RefundThreshold, collectorUnit,
 		refundAmountDisplay, collectorUnit, refundAmountWei, *account.RefundTarget, collectorUnit)
 
 	// Call faucet directly with wei amount (specify unit as wei to avoid conversion)
-	logger.Debugf("Calling faucet with amount: %.0f wei for account %s", refundAmountWei, account.Address)
+	logger.Debugf("%s Calling faucet with amount: %.0f wei for account %s", rs.logPrefix(), refundAmountWei, account.Address)
 	faucetResult, err := rs.faucetClient.FundAccountWeiWithRetry(ctx, account.Address, refundAmountWei, 2)
 	if err != nil {
 		event.Error = fmt.Errorf("failed to fund account: %w", err)
 		event.Duration = time.Since(startTime)
-		logger.Errorf("Failed to fund account %s: %v", account.Name, err)
+		logger.Errorf("%s Failed to fund account %s: %v", rs.logPrefix(), account.Name, err)
 		return event
 	}
 
@@ -384,8 +357,8 @@ func (rs *RefundScheduler) processAccount(node *config.Node, account *config.Acc
 	event.Duration = time.Since(startTime)
 
 	if faucetResult.Success {
-		logMsg := fmt.Sprintf("Successfully refunded account %s with %.6f %s (%.0f wei), session: %s, status: %s, claim status: %s",
-			account.Name, refundAmountDisplay, collectorUnit, event.AmountWei, event.Session, event.Status, event.ClaimStatus)
+		logMsg := fmt.Sprintf("%s Successfully refunded account %s with %.6f %s (%.0f wei), session: %s, status: %s, claim status: %s",
+			rs.logPrefix(), account.Name, refundAmountDisplay, collectorUnit, event.AmountWei, event.Session, event.Status, event.ClaimStatus)
 
 		if event.Confirmed && event.ClaimHash != "" {
 			logMsg += fmt.Sprintf(", confirmed with tx: %s at block %d", event.ClaimHash, event.ClaimBlock)
@@ -394,7 +367,7 @@ func (rs *RefundScheduler) processAccount(node *config.Node, account *config.Acc
 		logger.Infof(logMsg)
 	} else {
 		event.Error = fmt.Errorf("faucet funding failed: %v", faucetResult.Error)
-		logger.Errorf("Faucet funding failed for account %s: %v", account.Name, faucetResult.Error)
+		logger.Errorf("%s Faucet funding failed for account %s: %v", rs.logPrefix(), account.Name, faucetResult.Error)
 	}
 
 	return event
