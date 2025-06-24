@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +22,7 @@ type mockModuleCollector struct {
 	err            error
 	closeCalled    bool
 	healthOverride *float64 // Allow overriding health for specific tests
+	collectFunc    func(ctx context.Context, account *config.Account) (*collector.BaseResult, error)
 }
 
 func init() {
@@ -27,6 +30,9 @@ func init() {
 }
 
 func (m *mockModuleCollector) CollectAccountBalance(ctx context.Context, account *config.Account) (*collector.BaseResult, error) {
+	if m.collectFunc != nil {
+		return m.collectFunc(ctx, account)
+	}
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -799,7 +805,6 @@ func TestSchedulerProcessAccounts(t *testing.T) {
 		currencyRegistry: currencyRegistry,
 		faucetClient:     mockFaucet,
 		ctx:              context.Background(),
-		eventBufferSize:  MAX_BUFFER_SIZE,
 	}
 
 	events := rs.processAccounts()
@@ -813,6 +818,122 @@ func TestSchedulerProcessAccounts(t *testing.T) {
 			t.Errorf("Expected successful refund event, got: %v", event.Error)
 		}
 	}
+}
+
+func TestSchedulerProcessAccounts_ConcurrencyLimit(t *testing.T) {
+	var activeWorkers int32
+	var maxActiveWorkers int32
+	var mu sync.Mutex
+
+	// Mock collector that simulates slow processing to test concurrency
+	mockCollector := &mockModuleCollector{
+		balance: 2.0, // Below threshold to trigger refund
+	}
+
+	// Override the CollectAccountBalance to simulate slow processing
+	mockCollector.collectFunc = func(ctx context.Context, account *config.Account) (*collector.BaseResult, error) {
+		// Track active workers
+		current := atomic.AddInt32(&activeWorkers, 1)
+		defer atomic.AddInt32(&activeWorkers, -1)
+
+		// Track max concurrency
+		mu.Lock()
+		if current > maxActiveWorkers {
+			maxActiveWorkers = current
+		}
+		mu.Unlock()
+
+		// Simulate slow work
+		time.Sleep(100 * time.Millisecond)
+
+		// Return default result like the original method would
+		health := 1.0
+		if mockCollector.healthOverride != nil {
+			health = *mockCollector.healthOverride
+		}
+		return &collector.BaseResult{
+			NodeName: "test-node",
+			Account:  *account,
+			Value:    mockCollector.balance,
+			Health:   health,
+		}, nil
+	}
+
+	mockFaucet := &mockFauceter{
+		fundWithRetryFunc: func(ctx context.Context, address string, amountWei float64, maxRetries int) (*faucet.FaucetResult, error) {
+			return &faucet.FaucetResult{
+				Success: true,
+			}, nil
+		},
+	}
+
+	currencyRegistry := currency.NewDefaultRegistry()
+
+	// Create node with multiple accounts (more than MAX_WORKER_GOROUTINES)
+	node := createTestNodeConfig("test-node", true)
+	refundThreshold := 5.0
+	refundTarget := 10.0
+
+	// Add 25 accounts (more than MAX_WORKER_GOROUTINES which is 20)
+	node.Accounts = []*config.Account{}
+	for i := 0; i < 25; i++ {
+		account := &config.Account{
+			Address:         fmt.Sprintf("0x123456789012345678901234567890123456789%d", i),
+			Name:            fmt.Sprintf("test-account-%d", i),
+			RefundThreshold: &refundThreshold,
+			RefundTarget:    &refundTarget,
+		}
+		node.Accounts = append(node.Accounts, account)
+	}
+
+	rs := &RefundScheduler{
+		node:             node,
+		collector:        mockCollector,
+		currencyRegistry: currencyRegistry,
+		faucetClient:     mockFaucet,
+		ctx:              context.Background(),
+	}
+
+	logger.Infof("Testing concurrency limit with %d accounts and max %d workers", len(node.Accounts), MAX_WORKER_GOROUTINES)
+
+	start := time.Now()
+	events := rs.processAccounts()
+	duration := time.Since(start)
+
+	// Verify results
+	if len(events) != 25 {
+		t.Errorf("Expected 25 events, got %d", len(events))
+	}
+
+	// Verify concurrency was limited
+	mu.Lock()
+	finalMaxWorkers := maxActiveWorkers
+	mu.Unlock()
+
+	if finalMaxWorkers > int32(MAX_WORKER_GOROUTINES) {
+		t.Errorf("Maximum active workers %d exceeded limit %d", finalMaxWorkers, MAX_WORKER_GOROUTINES)
+	}
+
+	// Verify we actually used concurrent processing (should be more than 1 worker)
+	if finalMaxWorkers < 2 {
+		t.Errorf("Expected concurrent processing with multiple workers, but max was only %d", finalMaxWorkers)
+	}
+
+	// With 20 max workers processing 25 accounts, and each taking ~100ms,
+	// it should take roughly 200ms (25/20 = 1.25 rounds, so 2 * 100ms)
+	// Allow some buffer for test environment variations
+	expectedMinDuration := 150 * time.Millisecond
+	expectedMaxDuration := 350 * time.Millisecond
+
+	if duration < expectedMinDuration {
+		t.Errorf("Processing completed too quickly (%v), suggesting no concurrency limit was applied", duration)
+	}
+	if duration > expectedMaxDuration {
+		t.Logf("Warning: Processing took longer than expected (%v), but this might be due to test environment", duration)
+	}
+
+	logger.Infof("Concurrency test completed: %d accounts processed in %v with max %d concurrent workers",
+		len(events), duration, finalMaxWorkers)
 }
 
 func TestSchedulerManager_NewSchedulerManager(t *testing.T) {
