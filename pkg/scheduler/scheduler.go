@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/carlmjohnson/flowmatic"
 	"github.com/robfig/cron/v3"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/collector"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
@@ -15,7 +16,7 @@ import (
 )
 
 const (
-	MAX_BUFFER_SIZE = 100
+	MAX_WORKER_GOROUTINES = 20 // Maximum concurrent workers for processing accounts
 )
 
 // RefundScheduler manages automatic account refunding based on balance thresholds
@@ -25,9 +26,6 @@ type RefundScheduler struct {
 	currencyRegistry *currency.Registry
 	collector        collector.IModuleCollector
 	cron             *cron.Cron
-
-	// Pre-calculated buffer size for event channel
-	eventBufferSize int
 
 	running  bool
 	mutex    sync.RWMutex
@@ -73,7 +71,7 @@ func NewNodeRefundScheduler(node *config.Node, currencyRegistry *currency.Regist
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Calculate buffer size based on refund-enabled accounts for this node only
+	// Count refund-enabled accounts for this node
 	refundAccountCount := 0
 	for _, account := range node.Accounts {
 		if account.RefundThreshold != nil && account.RefundTarget != nil {
@@ -81,11 +79,8 @@ func NewNodeRefundScheduler(node *config.Node, currencyRegistry *currency.Regist
 		}
 	}
 
-	// Set buffer size with sensible minimum
-	eventBufferSize := max(refundAccountCount, 10) // Smaller buffer for single node
-
-	logger.Debugf("[scheduler %s] Node-specific scheduler configured for %d accounts with event buffer size %d",
-		node.Name, refundAccountCount, eventBufferSize)
+	logger.Debugf("[scheduler %s] Node-specific scheduler configured for %d accounts with max %d concurrent workers",
+		node.Name, refundAccountCount, MAX_WORKER_GOROUTINES)
 
 	scheduler := &RefundScheduler{
 		node:             node,
@@ -93,7 +88,6 @@ func NewNodeRefundScheduler(node *config.Node, currencyRegistry *currency.Regist
 		currencyRegistry: currencyRegistry,
 		collector:        nodeCollector,
 		cron:             cron.New(cron.WithSeconds()),
-		eventBufferSize:  eventBufferSize,
 		stopChan:         make(chan struct{}),
 		ctx:              ctx,
 		cancel:           cancel,
@@ -185,38 +179,46 @@ func (rs *RefundScheduler) executeRefundCheck() {
 
 // processAccounts checks all accounts and refunds those below threshold
 func (rs *RefundScheduler) processAccounts() []*RefundEvent {
-	var events []*RefundEvent
-	var wg sync.WaitGroup
-
-	// Use pre-calculated buffer size - no more deadlocks!
-	eventChan := make(chan *RefundEvent, rs.eventBufferSize)
-
-	// Process each account in the node
+	// Filter accounts that have refund configuration
+	var refundAccounts []*config.Account
 	for _, account := range rs.node.Accounts {
 		if account.RefundThreshold == nil || account.RefundTarget == nil {
 			logger.Debugf("%s Skipping account %s - no refund configuration", rs.logPrefix(), account.Name)
 			continue
 		}
-
-		wg.Add(1)
-		go func(acc *config.Account) {
-			defer wg.Done()
-			event := rs.processAccount(acc)
-			if event != nil {
-				eventChan <- event // Now guaranteed to never block!
-			}
-		}(account)
+		refundAccounts = append(refundAccounts, account)
 	}
 
-	// Wait for all goroutines to complete
-	go func() {
-		wg.Wait()
-		close(eventChan)
-	}()
+	if len(refundAccounts) == 0 {
+		logger.Debugf("%s No accounts configured for refund", rs.logPrefix())
+		return nil
+	}
 
-	// Collect all events
+	// Use channel to collect results
+	eventChan := make(chan *RefundEvent, len(refundAccounts))
+
+	logger.Debugf("%s Processing %d accounts with max %d concurrent workers",
+		rs.logPrefix(), len(refundAccounts), MAX_WORKER_GOROUTINES)
+
+	err := flowmatic.Each(MAX_WORKER_GOROUTINES, refundAccounts, func(account *config.Account) error {
+		event := rs.processAccount(account)
+		if event != nil {
+			eventChan <- event
+		}
+		return nil
+	})
+
+	// Close channel to signal no more events
+	close(eventChan)
+
+	// Collect all events from channel
+	var events []*RefundEvent
 	for event := range eventChan {
 		events = append(events, event)
+	}
+
+	if err != nil {
+		logger.Errorf("%s Error during account processing: %v", rs.logPrefix(), err)
 	}
 
 	return events
@@ -407,11 +409,4 @@ func (rs *RefundScheduler) convertFromWei(amountWei float64, targetUnit string) 
 		return amountWei, nil
 	}
 	return rs.currencyRegistry.Convert(amountWei, "wei", targetUnit)
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
