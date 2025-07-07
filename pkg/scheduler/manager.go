@@ -43,11 +43,6 @@ func (sm *SchedulerManager) logPrefix() string {
 	return "[manager]"
 }
 
-// logPrefixNode returns a consistent log prefix for node-specific operations
-func (sm *SchedulerManager) logPrefixNode(nodeName string) string {
-	return fmt.Sprintf("[manager %s]", nodeName)
-}
-
 // NewSchedulerManager creates a new scheduler manager
 func NewSchedulerManager(cfg *config.Schema, currencyRegistry *currency.Registry) (*SchedulerManager, error) {
 	// Create collectors for each node
@@ -106,13 +101,13 @@ func (sm *SchedulerManager) Start() error {
 		// Create node-specific scheduler
 		scheduler, err := sm.createNodeScheduler(node, faucetClient)
 		if err != nil {
-			logger.Errorf("%s Failed to create scheduler for node %s: %v", sm.logPrefixNode(node.Name), node.Name, err)
+			logger.Errorf("%s Failed to create scheduler for node %s: %v", sm.logPrefix(), node.Name, err)
 			continue
 		}
 
 		// Start the scheduler
 		if err := scheduler.Start(); err != nil {
-			logger.Errorf("%s Failed to start scheduler for node %s: %v", sm.logPrefixNode(node.Name), node.Name, err)
+			logger.Errorf("%s Failed to start scheduler for node %s: %v", sm.logPrefix(), node.Name, err)
 			continue
 		}
 
@@ -127,7 +122,7 @@ func (sm *SchedulerManager) Start() error {
 		}
 
 		logger.Infof("%s Started scheduler for node '%s' with %d refund-enabled accounts (schedule: %s, faucet: %s)",
-			sm.logPrefixNode(node.Name), node.Name, refundAccountCount, node.AutoRefund.Schedule, node.AutoRefund.FaucetURL)
+			sm.logPrefix(), node.Name, refundAccountCount, node.AutoRefund.Schedule, node.AutoRefund.FaucetURL)
 	}
 
 	if schedulersStarted == 0 {
@@ -157,9 +152,9 @@ func (sm *SchedulerManager) Stop() error {
 		go func(name string, s *RefundScheduler) {
 			defer wg.Done()
 			if err := s.Stop(); err != nil {
-				logger.Errorf("%s Failed to stop scheduler for node %s: %v", sm.logPrefixNode(name), name, err)
+				logger.Errorf("%s Failed to stop scheduler for node %s: %v", sm.logPrefix(), name, err)
 			} else {
-				logger.Debugf("%s Stopped scheduler for node %s", sm.logPrefixNode(name), name)
+				logger.Debugf("%s Stopped scheduler for node %s", sm.logPrefix(), name)
 			}
 		}(nodeName, scheduler)
 	}
@@ -172,7 +167,7 @@ func (sm *SchedulerManager) Stop() error {
 	// Close collectors
 	for nodeName, collector := range sm.collectors {
 		if err := collector.Close(); err != nil {
-			logger.Errorf("%s Failed to close collector for node %s: %v", sm.logPrefixNode(nodeName), nodeName, err)
+			logger.Errorf("%s Failed to close collector for node %s: %v", sm.logPrefix(), nodeName, err)
 		}
 	}
 
@@ -280,7 +275,7 @@ func (sm *SchedulerManager) RestartNodeScheduler(nodeName string) error {
 	// Stop existing scheduler if it exists
 	if scheduler, exists := sm.schedulers[nodeName]; exists {
 		if err := scheduler.Stop(); err != nil {
-			logger.Warnf("%s Error stopping existing scheduler for node %s: %v", sm.logPrefixNode(nodeName), nodeName, err)
+			logger.Warnf("%s Error stopping existing scheduler for node %s: %v", sm.logPrefix(), nodeName, err)
 		}
 		delete(sm.schedulers, nodeName)
 	}
@@ -306,6 +301,6 @@ func (sm *SchedulerManager) RestartNodeScheduler(nodeName string) error {
 	}
 
 	sm.schedulers[nodeName] = scheduler
-	logger.Infof("%s Restarted scheduler for node %s", sm.logPrefixNode(nodeName), nodeName)
+	logger.Infof("%s Restarted scheduler for node %s", sm.logPrefix(), nodeName)
 	return nil
 }

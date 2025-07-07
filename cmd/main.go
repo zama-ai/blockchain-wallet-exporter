@@ -47,7 +47,7 @@ func main() {
 	if err != nil {
 		panic(fmt.Errorf("failed to parse log level: %v", err))
 	}
-	err = logger.InitLogger(logger.WithLevel(level))
+	err = logger.InitLogger(logger.WithLevel(level), logger.WithEncodeTime("timestamp", zapcore.ISO8601TimeEncoder))
 	if err != nil {
 		panic(fmt.Errorf("failed to init logger: %v", err))
 	}

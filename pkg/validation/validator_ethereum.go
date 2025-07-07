@@ -116,10 +116,10 @@ func (v *EthereumValidator) validateUnit(node *config.Node) ValidationErrors {
 func (v *EthereumValidator) validateAccounts(node *config.Node) ValidationErrors {
 	var errors ValidationErrors
 
-	for i, account := range node.Accounts {
+	for _, account := range node.Accounts {
 		if account.Address == "" {
 			errors = append(errors, ValidationError{
-				Field:   fmt.Sprintf("accounts[%d].address", i),
+				Field:   fmt.Sprintf("account %s", account.Name),
 				Message: "account address cannot be empty",
 			})
 			continue
@@ -127,7 +127,7 @@ func (v *EthereumValidator) validateAccounts(node *config.Node) ValidationErrors
 
 		if !common.IsHexAddress(account.Address) {
 			errors = append(errors, ValidationError{
-				Field:   fmt.Sprintf("accounts[%d].address", i),
+				Field:   fmt.Sprintf("account %s", account.Name),
 				Message: "invalid Ethereum address format",
 			})
 		}
@@ -136,7 +136,7 @@ func (v *EthereumValidator) validateAccounts(node *config.Node) ValidationErrors
 		checksumAddr := common.HexToAddress(account.Address).Hex()
 		if account.Address != checksumAddr {
 			errors = append(errors, ValidationError{
-				Field:   fmt.Sprintf("accounts[%d].address", i),
+				Field:   fmt.Sprintf("account %s", account.Name),
 				Message: fmt.Sprintf("address should be in checksum format: %s", checksumAddr),
 			})
 		}
