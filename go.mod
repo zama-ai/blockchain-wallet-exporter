@@ -8,7 +8,7 @@ require (
 	github.com/cosmos/cosmos-sdk v0.50.14
 	github.com/ethereum/go-ethereum v1.14.13
 	github.com/gofiber/contrib/fiberzap/v2 v2.1.5
-	github.com/gofiber/fiber/v2 v2.52.6
+	github.com/gofiber/fiber/v2 v2.52.9
 	github.com/prometheus/client_golang v1.21.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/samber/slog-zap/v2 v2.6.2
