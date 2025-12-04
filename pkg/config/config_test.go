@@ -202,3 +202,75 @@ nodes:
 		})
 	}
 }
+
+func TestERC20AutoUnitDiscoveryParsing(t *testing.T) {
+	yamlContent := `
+global:
+  environment: "dev"
+  metricsAddr: ":2112"
+  logLevel: "info"
+nodes:
+  - name: "erc20-node"
+    module: "erc20"
+    httpAddr: "http://localhost:8545"
+    contractAddress: "0x0000000000000000000000000000000000000001"
+    autoUnitDiscovery: true
+    accounts:
+      - address: "0x0000000000000000000000000000000000000002"
+        name: "erc20-account"
+`
+
+	cfg, err := ReadConfigWithError(strings.NewReader(yamlContent))
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+
+	if len(cfg.Nodes) != 1 {
+		t.Fatalf("expected 1 node")
+	}
+
+	node := cfg.Nodes[0]
+	if !node.AutoUnitDiscovery {
+		t.Fatalf("expected autoUnitDiscovery to be true")
+	}
+	if node.Unit != nil || node.MetricsUnit != nil {
+		t.Fatalf("expected units to be nil before discovery")
+	}
+}
+
+func TestERC20NodeParsing(t *testing.T) {
+	yamlContent := `
+global:
+  environment: "dev"
+  metricsAddr: ":2112"
+  logLevel: "info"
+nodes:
+  - name: "erc20-node"
+    module: "erc20"
+    httpAddr: "http://localhost:8545"
+    contractAddress: "0x0000000000000000000000000000000000000001"
+    unit: "wei"
+    metricsUnit: "wei"
+    accounts:
+      - address: "0x0000000000000000000000000000000000000002"
+        name: "erc20-account"
+`
+
+	cfg, err := ReadConfigWithError(strings.NewReader(yamlContent))
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+
+	if len(cfg.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(cfg.Nodes))
+	}
+
+	node := cfg.Nodes[0]
+	if !node.IsERC20Module() {
+		t.Fatalf("expected node to be recognized as erc20 module")
+	}
+
+	if node.ContractAddr != "0x0000000000000000000000000000000000000001" {
+		t.Fatalf("unexpected contract address: %s", node.ContractAddr)
+	}
+}

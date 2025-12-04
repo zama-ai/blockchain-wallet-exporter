@@ -90,6 +90,11 @@ func (v *EthereumValidator) validateHTTPAddress(node *config.Node) ValidationErr
 func (v *EthereumValidator) validateUnit(node *config.Node) ValidationErrors {
 	var errors ValidationErrors
 
+	if node.IsERC20Module() {
+		// ERC20 units are validated separately
+		return errors
+	}
+
 	if node.Unit == nil {
 		errors = append(errors, ValidationError{
 			Field:   "unit",

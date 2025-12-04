@@ -22,11 +22,13 @@ type Module string
 const (
 	Cosmos Module = "cosmos"
 	EVM    Module = "evm"
+	ERC20  Module = "erc20"
 )
 
 var ModuleNames = map[string]Module{
 	"cosmos": Cosmos,
 	"evm":    EVM,
+	"erc20":  ERC20,
 }
 
 type BaseResult struct {
@@ -184,8 +186,6 @@ func (c *BaseCollector) Collect(ch chan<- prometheus.Metric) {
 	metrics := c.collectMetrics()
 
 	for _, result := range metrics {
-		logger.Debugf("%s: %f", string(c.module), result.Health)
-
 		labels := prometheus.Labels{
 			"address":      result.Account.Address,
 			"account_name": result.Account.Name,

@@ -40,18 +40,26 @@ type SSL struct {
 }
 
 type Node struct {
-	Name          string            `yaml:"name"`
-	Module        string            `yaml:"module"`
-	GrpcAddr      string            `yaml:"grpcAddr"`
-	HttpAddr      string            `yaml:"httpAddr"`
-	HttpAddrEnv   string            `yaml:"httpAddrEnv"`
-	MetricsUnit   *currency.Unit    `yaml:"metricsUnit"`
-	Unit          *currency.Unit    `yaml:"unit"`
-	HttpSSLVerify string            `yaml:"httpSSLVerify"`
-	GrpcSSLVerify string            `yaml:"grpcSSLVerify"`
-	Accounts      []*Account        `yaml:"accounts"`
-	Labels        map[string]string `yaml:"labels"`
-	Authorization *Authorization    `yaml:"authorization"`
+	Name           string            `yaml:"name"`
+	Module         string            `yaml:"module"`
+	GrpcAddr       string            `yaml:"grpcAddr"`
+	HttpAddr       string            `yaml:"httpAddr"`
+	HttpAddrEnv    string            `yaml:"httpAddrEnv"`
+	ContractAddr   string            `yaml:"contractAddress"`
+	MetricsUnit    *currency.Unit    `yaml:"metricsUnit"`
+	Unit           *currency.Unit    `yaml:"unit"`
+	MetricsUnitSet bool              `yaml:"-"` // set during normalization/discovery
+	UnitSet        bool              `yaml:"-"` // set during normalization/discovery
+	HttpSSLVerify  string            `yaml:"httpSSLVerify"`
+	GrpcSSLVerify  string            `yaml:"grpcSSLVerify"`
+	Accounts       []*Account        `yaml:"accounts"`
+	Labels         map[string]string `yaml:"labels"`
+	Authorization  *Authorization    `yaml:"authorization"`
+
+	// ERC20-specific discovery behavior
+	AutoUnitDiscovery bool   `yaml:"autoUnitDiscovery"`
+	ResolvedUnit      string `yaml:"-"`
+	ResolvedMetrics   string `yaml:"-"`
 
 	// Auto-refund scheduler configuration for this node
 	AutoRefund *AutoRefund `yaml:"autoRefund"`
@@ -72,8 +80,14 @@ func (s *Schema) Normalize() error {
 }
 
 func (n *Node) Normalize() error {
-	if n.MetricsUnit == nil {
+	if n.MetricsUnit == nil && n.Unit != nil {
 		n.MetricsUnit = n.Unit
+	}
+	if n.Unit != nil {
+		n.UnitSet = true
+	}
+	if n.MetricsUnit != nil {
+		n.MetricsUnitSet = true
 	}
 	if n.HttpAddrEnv != "" {
 		envValue := os.Getenv(n.HttpAddrEnv)
@@ -167,4 +181,37 @@ func (n *Node) IsAutoRefundEnabled() bool {
 		n.AutoRefund.Enabled &&
 		n.AutoRefund.FaucetURL != "" &&
 		n.HasRefundEnabledAccounts()
+}
+
+// IsERC20Module returns true when node module targets an ERC20 token contract
+func (n *Node) IsERC20Module() bool {
+	return n != nil && n.Module == "erc20"
+}
+
+// BaseUnitName returns the configured base unit name for this node
+func (n *Node) BaseUnitName() string {
+	if n == nil {
+		return ""
+	}
+	if n.ResolvedUnit != "" {
+		return n.ResolvedUnit
+	}
+	if n.Unit != nil {
+		return n.Unit.Name
+	}
+	return ""
+}
+
+// MetricsUnitName returns the desired metrics display unit for this node
+func (n *Node) MetricsUnitName() string {
+	if n == nil {
+		return ""
+	}
+	if n.ResolvedMetrics != "" {
+		return n.ResolvedMetrics
+	}
+	if n.MetricsUnit != nil {
+		return n.MetricsUnit.Name
+	}
+	return ""
 }

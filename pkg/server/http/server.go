@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/gofiber/contrib/fiberzap/v2"
 	"github.com/gofiber/fiber/v2"
@@ -15,7 +16,6 @@ import (
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
-	"github.com/zama-ai/blockchain-wallet-exporter/pkg/validation"
 
 	"go.uber.org/zap"
 )
@@ -28,7 +28,8 @@ type Server struct {
 	// Max concurrent requests for the collector
 	MaxConccurentRequests int
 
-	registry *prometheus.Registry
+	registry   *prometheus.Registry
+	collectors []collector.IModuleCollector // Track collectors for cleanup
 }
 
 type Option func(*Server)
@@ -60,11 +61,6 @@ func WithCurrencyRegistry(registry *currency.Registry) Option {
 	return func(s *Server) {
 		s.currencyRegistry = registry
 	}
-}
-
-func (s *Server) ValidateConfig() error {
-	validator := validation.NewConfigValidator()
-	return validator.ValidateConfig(s.cfg)
 }
 
 func (s *Server) InitCollectors() error {
@@ -102,12 +98,7 @@ func (s *Server) Run() error {
 		}))
 	}
 
-	// validate config
-	if err := s.ValidateConfig(); err != nil {
-		return err
-	}
-
-	// init collector
+	// init collector (validation already done in main.go before server creation)
 	if err := s.InitCollectors(); err != nil {
 		return err
 	}
@@ -135,7 +126,20 @@ func (s *Server) Run() error {
 }
 
 func (s *Server) Stop() {
-	_ = s.app.Shutdown()
+	// Close collectors first to release RPC connections
+	logger.Infof("Closing %d collectors...", len(s.collectors))
+	for i, c := range s.collectors {
+		if err := c.Close(); err != nil {
+			logger.Errorf("failed to close collector %d: %v", i, err)
+		}
+	}
+	logger.Infof("All collectors closed")
+
+	logger.Infof("Stopping HTTP server...")
+	if err := s.app.ShutdownWithTimeout(1 * time.Second); err != nil {
+		logger.Debugf("HTTP server shutdown: %v", err)
+	}
+	logger.Infof("HTTP server stopped")
 }
 
 func (s *Server) MapRoutes() error {

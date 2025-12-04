@@ -11,6 +11,7 @@ var (
 	mapValidators = map[string]NodeValidator{
 		"cosmos": NewCosmosValidator(),
 		"evm":    NewEthereumValidator(),
+		"erc20":  NewERC20Validator(),
 	}
 )
 
