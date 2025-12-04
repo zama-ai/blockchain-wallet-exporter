@@ -27,6 +27,12 @@ func NewCollector(node config.Node, currencyRegistry *currency.Registry) (promet
 		if err != nil {
 			return nil, fmt.Errorf("failed to init cosmos collector: %v", err)
 		}
+	case "erc20":
+		logger.Infof("initializing erc20 collector for %s", node.Name)
+		prometheusCollector, err = NewERC20Collector(&node, currencyRegistry)
+		if err != nil {
+			return nil, fmt.Errorf("failed to init erc20 collector: %v", err)
+		}
 	default:
 		return nil, fmt.Errorf("invalid module: %s", node.Module)
 	}

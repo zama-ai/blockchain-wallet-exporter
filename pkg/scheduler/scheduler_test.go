@@ -77,9 +77,9 @@ func createTestNodeConfig(nodeName string, autoRefundEnabled bool) *config.Node 
 		HttpAddr: "http://test-node:8545", // Required for EVM collector
 		Labels:   make(map[string]string), // Required for collector to prevent nil map assignment
 		Unit: &currency.Unit{
-			Name:     "eth",
-			Symbol:   "ETH",
-			Decimals: 18,
+			Name:     "wei",
+			Symbol:   "wei",
+			Decimals: 0,
 		},
 		MetricsUnit: &currency.Unit{
 			Name:     "eth",
@@ -154,7 +154,7 @@ func TestProcessAccount_NoRefundNeeded(t *testing.T) {
 
 func TestProcessAccount_RefundSuccessful(t *testing.T) {
 	var faucetCalled bool
-	expectedAmountWei := 8e18 // 10 (target) - 2 (current) = 8 ETH
+	expectedAmountBase := 8e18 // 10 (target) - 2 (current) = 8 ETH (in wei)
 
 	mockCollector := &mockModuleCollector{
 		balance: 2.0, // 2 ETH, below threshold
@@ -162,8 +162,8 @@ func TestProcessAccount_RefundSuccessful(t *testing.T) {
 	mockFaucet := &mockFauceter{
 		fundWithRetryFunc: func(ctx context.Context, address string, amountWei float64, maxRetries int) (*faucet.FaucetResult, error) {
 			faucetCalled = true
-			if amountWei != expectedAmountWei {
-				return nil, fmt.Errorf("expected amount %f, got %f", expectedAmountWei, amountWei)
+			if amountWei != expectedAmountBase {
+				return nil, fmt.Errorf("expected amount %f, got %f", expectedAmountBase, amountWei)
 			}
 			return &faucet.FaucetResult{
 				Success: true,
@@ -203,8 +203,8 @@ func TestProcessAccount_RefundSuccessful(t *testing.T) {
 	if !event.Success {
 		t.Errorf("Expected refund to be successful, but it failed: %v", event.Error)
 	}
-	if event.AmountWei != expectedAmountWei {
-		t.Errorf("Expected event AmountWei to be %f, but got %f", expectedAmountWei, event.AmountWei)
+	if event.AmountBaseUnit != expectedAmountBase {
+		t.Errorf("Expected event AmountBaseUnit to be %f, but got %f", expectedAmountBase, event.AmountBaseUnit)
 	}
 }
 
@@ -332,10 +332,11 @@ func TestProcessAccount_FaucetError(t *testing.T) {
 	}
 }
 
-func TestConvertToWei(t *testing.T) {
+func TestConvertToBaseUnit(t *testing.T) {
 	currencyRegistry := currency.NewDefaultRegistry()
 	rs := &RefundScheduler{
 		currencyRegistry: currencyRegistry,
+		node:             createTestNodeConfig("test-node", true),
 	}
 
 	tests := []struct {
@@ -377,7 +378,7 @@ func TestConvertToWei(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := rs.convertToWei(tt.amount, tt.sourceUnit)
+			result, err := rs.convertToBaseUnit(tt.amount, tt.sourceUnit)
 			if tt.expectErr {
 				if err == nil {
 					t.Errorf("Expected error for %s, but got none", tt.name)
@@ -394,43 +395,44 @@ func TestConvertToWei(t *testing.T) {
 	}
 }
 
-func TestConvertFromWei(t *testing.T) {
+func TestConvertFromBaseUnit(t *testing.T) {
 	currencyRegistry := currency.NewDefaultRegistry()
 	rs := &RefundScheduler{
 		currencyRegistry: currencyRegistry,
+		node:             createTestNodeConfig("test-node", true),
 	}
 
 	tests := []struct {
 		name       string
-		amountWei  float64
+		amountBase float64
 		targetUnit string
 		expected   float64
 		expectErr  bool
 	}{
 		{
 			name:       "wei to wei",
-			amountWei:  1000,
+			amountBase: 1000,
 			targetUnit: "wei",
 			expected:   1000,
 			expectErr:  false,
 		},
 		{
 			name:       "wei to eth",
-			amountWei:  1e18,
+			amountBase: 1e18,
 			targetUnit: "eth",
 			expected:   1.0,
 			expectErr:  false,
 		},
 		{
 			name:       "wei to gwei",
-			amountWei:  1e9,
+			amountBase: 1e9,
 			targetUnit: "gwei",
 			expected:   1.0,
 			expectErr:  false,
 		},
 		{
 			name:       "invalid unit",
-			amountWei:  1000,
+			amountBase: 1000,
 			targetUnit: "invalid",
 			expected:   0,
 			expectErr:  true,
@@ -439,7 +441,7 @@ func TestConvertFromWei(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := rs.convertFromWei(tt.amountWei, tt.targetUnit)
+			result, err := rs.convertFromBaseUnit(tt.amountBase, tt.targetUnit)
 			if tt.expectErr {
 				if err == nil {
 					t.Errorf("Expected error for %s, but got none", tt.name)

@@ -152,12 +152,21 @@ func (u *Unit) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	if err := unmarshal(&name); err != nil {
 		return err
 	}
+	name = strings.ToLower(name)
 
 	// Create a default registry for unmarshaling
 	registry := NewDefaultRegistry()
 	unit, err := registry.Get(name)
 	if err != nil {
-		return err
+		*u = Unit{
+			Name:         name,
+			Symbol:       name,
+			Decimals:     0,
+			ChainType:    "custom",
+			Description:  fmt.Sprintf("custom unit %s", name),
+			ConversionTo: map[string]float64{},
+		}
+		return nil
 	}
 
 	*u = *unit

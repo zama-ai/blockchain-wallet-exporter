@@ -185,22 +185,25 @@ func TestConvert(t *testing.T) {
 
 func TestUnmarshalYAML(t *testing.T) {
 	tests := []struct {
-		name    string
-		yaml    string
-		want    *Unit
-		wantErr bool
+		name         string
+		yaml         string
+		want         *Unit
+		wantErr      bool
+		wantChainTyp string
 	}{
 		{
-			name:    "valid ETH",
-			yaml:    "ETH",
-			want:    DefaultETH,
-			wantErr: false,
+			name:         "valid ETH",
+			yaml:         "ETH",
+			want:         DefaultETH,
+			wantErr:      false,
+			wantChainTyp: "evm",
 		},
 		{
-			name:    "invalid unit",
-			yaml:    "INVALID",
-			want:    nil,
-			wantErr: true,
+			name:         "custom unit",
+			yaml:         "INVALID",
+			want:         &Unit{Name: "invalid", Symbol: "invalid"},
+			wantErr:      false,
+			wantChainTyp: "custom",
 		},
 	}
 
@@ -214,7 +217,10 @@ func TestUnmarshalYAML(t *testing.T) {
 				assert.NoError(t, err)
 				assert.Equal(t, tt.want.Name, unit.Name)
 				assert.Equal(t, tt.want.Symbol, unit.Symbol)
-				assert.Equal(t, tt.want.Decimals, unit.Decimals)
+				assert.Equal(t, tt.wantChainTyp, unit.ChainType)
+				if tt.want != nil {
+					assert.Equal(t, tt.want.Decimals, unit.Decimals)
+				}
 			}
 		})
 	}

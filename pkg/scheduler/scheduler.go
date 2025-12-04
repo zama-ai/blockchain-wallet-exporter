@@ -43,8 +43,8 @@ type RefundEvent struct {
 	Threshold      float64
 	TargetAmount   float64
 	RefundAmount   float64
-	AmountWei      float64
-	SourceUnit     string
+	AmountBaseUnit float64
+	BaseUnit       string
 	Session        string
 	Status         string
 	ClaimStatus    string
@@ -162,6 +162,7 @@ func (rs *RefundScheduler) executeRefundCheck() {
 	successCount := 0
 	errorCount := 0
 	totalRefunded := 0.0
+	baseUnit := rs.baseUnitName()
 
 	for _, event := range events {
 		if event.Success {
@@ -173,8 +174,8 @@ func (rs *RefundScheduler) executeRefundCheck() {
 	}
 
 	duration := time.Since(startTime)
-	logger.Infof("%s Auto-refund check completed in %v: %d successful, %d errors, %.0f wei total refunded",
-		rs.logPrefix(), duration, successCount, errorCount, totalRefunded)
+	logger.Infof("%s Auto-refund check completed in %v: %d successful, %d errors, %.0f %s total refunded",
+		rs.logPrefix(), duration, successCount, errorCount, totalRefunded, baseUnit)
 }
 
 // processAccounts checks all accounts and refunds those below threshold
@@ -267,80 +268,83 @@ func (rs *RefundScheduler) processAccount(account *config.Account) *RefundEvent 
 
 	logger.Debugf("%s Collector unit determined as: %s", rs.logPrefix(), collectorUnit)
 
-	// Convert threshold and target from config unit to wei for faucet
-	thresholdWei, err := rs.convertToWei(*account.RefundThreshold, collectorUnit)
+	baseUnitName := rs.baseUnitName()
+	logger.Debugf("%s Base unit determined as: %s", rs.logPrefix(), baseUnitName)
+
+	// Convert threshold and target from config unit to the base unit for faucet
+	thresholdBase, err := rs.convertToBaseUnit(*account.RefundThreshold, collectorUnit)
 	if err != nil {
-		event.Error = fmt.Errorf("failed to convert threshold to wei: %w", err)
+		event.Error = fmt.Errorf("failed to convert threshold to base unit: %w", err)
 		event.Duration = time.Since(startTime)
-		logger.Errorf("%s Failed to convert threshold to wei for account %s: %v", rs.logPrefix(), account.Name, err)
+		logger.Errorf("%s Failed to convert threshold to base unit for account %s: %v", rs.logPrefix(), account.Name, err)
 		return event
 	}
-	logger.Debugf("%s Threshold conversion: %.6f %s -> %.0f wei", rs.logPrefix(), *account.RefundThreshold, collectorUnit, thresholdWei)
+	logger.Debugf("%s Threshold conversion: %.6f %s -> %.0f %s", rs.logPrefix(), *account.RefundThreshold, collectorUnit, thresholdBase, baseUnitName)
 
-	targetWei, err := rs.convertToWei(*account.RefundTarget, collectorUnit)
+	targetBase, err := rs.convertToBaseUnit(*account.RefundTarget, collectorUnit)
 	if err != nil {
-		event.Error = fmt.Errorf("failed to convert target to wei: %w", err)
+		event.Error = fmt.Errorf("failed to convert target to base unit: %w", err)
 		event.Duration = time.Since(startTime)
-		logger.Errorf("%s Failed to convert target to wei for account %s: %v", rs.logPrefix(), account.Name, err)
+		logger.Errorf("%s Failed to convert target to base unit for account %s: %v", rs.logPrefix(), account.Name, err)
 		return event
 	}
-	logger.Debugf("%s Target conversion: %.6f %s -> %.0f wei", rs.logPrefix(), *account.RefundTarget, collectorUnit, targetWei)
+	logger.Debugf("%s Target conversion: %.6f %s -> %.0f %s", rs.logPrefix(), *account.RefundTarget, collectorUnit, targetBase, baseUnitName)
 
-	// Convert collector balance to wei for comparison
-	currentBalanceWei, err := rs.convertToWei(result.Value, collectorUnit)
+	// Convert collector balance to base unit for comparison
+	currentBalanceBase, err := rs.convertToBaseUnit(result.Value, collectorUnit)
 	if err != nil {
-		event.Error = fmt.Errorf("failed to convert current balance to wei: %w", err)
+		event.Error = fmt.Errorf("failed to convert current balance to base unit: %w", err)
 		event.Duration = time.Since(startTime)
-		logger.Errorf("%s Failed to convert current balance to wei for account %s: %v", rs.logPrefix(), account.Name, err)
+		logger.Errorf("%s Failed to convert current balance to base unit for account %s: %v", rs.logPrefix(), account.Name, err)
 		return event
 	}
-	logger.Debugf("%s Balance conversion: %.6f %s -> %.0f wei", rs.logPrefix(), result.Value, collectorUnit, currentBalanceWei)
+	logger.Debugf("%s Balance conversion: %.6f %s -> %.0f %s", rs.logPrefix(), result.Value, collectorUnit, currentBalanceBase, baseUnitName)
 
-	// Update event with wei amount
-	event.CurrentBalance = currentBalanceWei
+	// Update event with base amount
+	event.CurrentBalance = currentBalanceBase
 
-	// Compare in wei
-	if currentBalanceWei >= thresholdWei {
-		logger.Debugf("%s Account %s balance %.6f %s (%.0f wei) is above threshold %.6f %s (%.0f wei), no refund needed",
-			rs.logPrefix(), account.Name, result.Value, collectorUnit, currentBalanceWei, *account.RefundThreshold, collectorUnit, thresholdWei)
+	// Compare in base unit
+	if currentBalanceBase >= thresholdBase {
+		logger.Debugf("%s Account %s balance %.6f %s (%.0f %s) is above threshold %.6f %s (%.0f %s), no refund needed",
+			rs.logPrefix(), account.Name, result.Value, collectorUnit, currentBalanceBase, baseUnitName, *account.RefundThreshold, collectorUnit, thresholdBase, baseUnitName)
 		return nil
 	}
 
-	// Calculate refund amount in wei
-	refundAmountWei := targetWei - currentBalanceWei
-	if refundAmountWei <= 0 {
-		logger.Warnf("%s Invalid refund amount %.0f wei for account %s", rs.logPrefix(), refundAmountWei, account.Name)
+	// Calculate refund amount in base units
+	refundAmountBase := targetBase - currentBalanceBase
+	if refundAmountBase <= 0 {
+		logger.Warnf("%s Invalid refund amount %.0f %s for account %s", rs.logPrefix(), refundAmountBase, baseUnitName, account.Name)
 		return nil
 	}
-	logger.Debugf("%s Refund calculation: %.0f (target) - %.0f (current) = %.0f wei", rs.logPrefix(), targetWei, currentBalanceWei, refundAmountWei)
+	logger.Debugf("%s Refund calculation: %.0f (target) - %.0f (current) = %.0f %s", rs.logPrefix(), targetBase, currentBalanceBase, refundAmountBase, baseUnitName)
 
 	// Convert values to human-readable units for display purposes only
-	currentBalanceDisplay, err := rs.convertFromWei(currentBalanceWei, collectorUnit)
+	currentBalanceDisplay, err := rs.convertFromBaseUnit(currentBalanceBase, collectorUnit)
 	if err != nil {
 		logger.Warnf("%s Failed to convert current balance for display: %v", rs.logPrefix(), err)
-		currentBalanceDisplay = currentBalanceWei // fallback to wei
+		currentBalanceDisplay = currentBalanceBase // fallback to base unit
 	}
 
-	refundAmountDisplay, err := rs.convertFromWei(refundAmountWei, collectorUnit)
+	refundAmountDisplay, err := rs.convertFromBaseUnit(refundAmountBase, collectorUnit)
 	if err != nil {
 		logger.Warnf("%s Failed to convert refund amount for display: %v", rs.logPrefix(), err)
-		refundAmountDisplay = refundAmountWei // fallback to wei
+		refundAmountDisplay = refundAmountBase // fallback to base unit
 	}
 
 	// Update event with refund details
-	event.RefundAmount = refundAmountWei
-	event.AmountWei = refundAmountWei
-	event.SourceUnit = "wei"
+	event.RefundAmount = refundAmountBase
+	event.AmountBaseUnit = refundAmountBase
+	event.BaseUnit = baseUnitName
 	event.Threshold = *account.RefundThreshold
 	event.TargetAmount = *account.RefundTarget
 
-	logger.Infof("%s Account %s balance %.6f %s (%.0f wei) is below threshold %.6f %s, refunding %.6f %s (%.0f wei) to reach target %.6f %s",
-		rs.logPrefix(), account.Name, currentBalanceDisplay, collectorUnit, currentBalanceWei, *account.RefundThreshold, collectorUnit,
-		refundAmountDisplay, collectorUnit, refundAmountWei, *account.RefundTarget, collectorUnit)
+	logger.Infof("%s Account %s balance %.6f %s (%.0f %s) is below threshold %.6f %s, refunding %.6f %s (%.0f %s) to reach target %.6f %s",
+		rs.logPrefix(), account.Name, currentBalanceDisplay, collectorUnit, currentBalanceBase, baseUnitName, *account.RefundThreshold, collectorUnit,
+		refundAmountDisplay, collectorUnit, refundAmountBase, baseUnitName, *account.RefundTarget, collectorUnit)
 
-	// Call faucet directly with wei amount (specify unit as wei to avoid conversion)
-	logger.Debugf("%s Calling faucet with amount: %.0f wei for account %s", rs.logPrefix(), refundAmountWei, account.Address)
-	faucetResult, err := rs.faucetClient.FundAccountWeiWithRetry(ctx, account.Address, refundAmountWei, 2)
+	// Call faucet directly with base unit amount
+	logger.Debugf("%s Calling faucet with amount: %.0f %s for account %s", rs.logPrefix(), refundAmountBase, baseUnitName, account.Address)
+	faucetResult, err := rs.faucetClient.FundAccountWeiWithRetry(ctx, account.Address, refundAmountBase, 2)
 	if err != nil {
 		event.Error = fmt.Errorf("failed to fund account: %w", err)
 		event.Duration = time.Since(startTime)
@@ -359,8 +363,8 @@ func (rs *RefundScheduler) processAccount(account *config.Account) *RefundEvent 
 	event.Duration = time.Since(startTime)
 
 	if faucetResult.Success {
-		logMsg := fmt.Sprintf("%s Successfully refunded account %s with %.6f %s (%.0f wei), session: %s, status: %s, claim status: %s",
-			rs.logPrefix(), account.Name, refundAmountDisplay, collectorUnit, event.AmountWei, event.Session, event.Status, event.ClaimStatus)
+		logMsg := fmt.Sprintf("%s Successfully refunded account %s with %.6f %s (%.0f %s), session: %s, status: %s, claim status: %s",
+			rs.logPrefix(), account.Name, refundAmountDisplay, collectorUnit, event.AmountBaseUnit, baseUnitName, event.Session, event.Status, event.ClaimStatus)
 
 		if event.Confirmed && event.ClaimHash != "" {
 			logMsg += fmt.Sprintf(", confirmed with tx: %s at block %d", event.ClaimHash, event.ClaimBlock)
@@ -394,19 +398,27 @@ func (rs *RefundScheduler) GetNextRun() time.Time {
 	return time.Time{}
 }
 
-// convertToWei converts amount from sourceUnit to wei
-func (rs *RefundScheduler) convertToWei(amount float64, sourceUnit string) (float64, error) {
-	if sourceUnit == "wei" {
-		return amount, nil
+func (rs *RefundScheduler) baseUnitName() string {
+	if rs.node != nil && rs.node.Unit != nil && rs.node.Unit.Name != "" {
+		return rs.node.Unit.Name
 	}
-	// Use the scheduler's currency registry
-	return rs.currencyRegistry.Convert(amount, sourceUnit, "wei")
+	return "wei"
 }
 
-// convertFromWei converts amount from wei to targetUnit
-func (rs *RefundScheduler) convertFromWei(amountWei float64, targetUnit string) (float64, error) {
-	if targetUnit == "wei" {
-		return amountWei, nil
+// convertToBaseUnit converts amount from sourceUnit to the node's base unit
+func (rs *RefundScheduler) convertToBaseUnit(amount float64, sourceUnit string) (float64, error) {
+	baseUnit := rs.baseUnitName()
+	if sourceUnit == baseUnit {
+		return amount, nil
 	}
-	return rs.currencyRegistry.Convert(amountWei, "wei", targetUnit)
+	return rs.currencyRegistry.Convert(amount, sourceUnit, baseUnit)
+}
+
+// convertFromBaseUnit converts amount from the node's base unit to the targetUnit
+func (rs *RefundScheduler) convertFromBaseUnit(amount float64, targetUnit string) (float64, error) {
+	baseUnit := rs.baseUnitName()
+	if targetUnit == baseUnit {
+		return amount, nil
+	}
+	return rs.currencyRegistry.Convert(amount, baseUnit, targetUnit)
 }

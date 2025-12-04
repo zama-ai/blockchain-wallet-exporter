@@ -88,3 +88,25 @@ nodes:
       env: test
 ```
 
+### ERC20 modules
+
+ERC20 token monitoring follows the same structure but additionally requires the target contract address. By default you can keep specifying `unit`/`metricsUnit` (useful when the registry already knows those units). When `autoUnitDiscovery: true` is set, the exporter will query the contract for `symbol`/`decimals`, register the corresponding base/metrics units automatically, and you can omit the unit fields entirely.
+
+```yaml
+  - name: l2-gateway-erc20
+    module: erc20
+    httpAddr: "https://l2-gateway-node-zws-dev-http.diplodocus-boa.ts.net"
+    contractAddress: "0x0000000000000000000000000000000000000000"
+    autoUnitDiscovery: true   # Let the exporter discover decimals/symbol and register units
+    autoRefund:
+      enabled: true
+      schedule: "@every 1m"
+      faucetUrl: "http://localhost:8080"
+      timeout: 30
+    accounts:
+      - address: "0xfcD843C3Bf1Dd5Aa3Bd78cdD3e0E28A34ef2fDaE"
+        name: test-1-l2
+        refundThreshold: 0.8
+        refundTarget: 1.2
+```
+

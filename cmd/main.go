@@ -1,17 +1,21 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
+	"github.com/zama-ai/blockchain-wallet-exporter/pkg/erc20"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/scheduler"
+	"github.com/zama-ai/blockchain-wallet-exporter/pkg/validation"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/version"
 
 	httpfiber "github.com/zama-ai/blockchain-wallet-exporter/pkg/server/http"
@@ -37,6 +41,8 @@ func main() {
 	if err != nil {
 		panic(fmt.Errorf("failed to open config file: %v", err))
 	}
+	defer file.Close()
+
 	config, err := config.ReadConfigWithError(file)
 	if err != nil {
 		panic(fmt.Errorf("failed to read config: %v", err))
@@ -52,8 +58,33 @@ func main() {
 		panic(fmt.Errorf("failed to init logger: %v", err))
 	}
 
+	// Validate configuration before any network operations
+	// This catches config errors early without needing to connect to nodes
+	configValidator := validation.NewConfigValidator()
+	if err := configValidator.ValidateConfig(config); err != nil {
+		logger.Fatalf("Configuration validation failed: %v", err)
+	}
+	logger.Infof("Configuration validated successfully")
+
 	// Initialize currency registry
 	currencyRegistry := currency.NewDefaultRegistry()
+
+	// Register ERC20 token units upfront so collectors/schedulers can convert values
+	// Use a timeout to prevent startup hangs if RPC endpoints are unresponsive
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	for _, node := range config.Nodes {
+		if !node.IsERC20Module() {
+			continue
+		}
+
+		meta, err := erc20.ResolveUnits(ctx, currencyRegistry, node)
+		if err != nil {
+			logger.Fatalf("Failed to prepare ERC20 units for node %s: %v", node.Name, err)
+		}
+		logger.Infof("Loaded ERC20 metadata for node %s (symbol=%s, decimals=%d)", node.Name, meta.Symbol, meta.Decimals)
+	}
 
 	// Initialize prometheus registry
 	promRegistry := prometheus.NewRegistry()
