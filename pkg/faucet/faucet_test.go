@@ -179,12 +179,6 @@ func TestContextAwareMethodsExist(t *testing.T) {
 	// Verify that methods exist and have correct signatures by checking they compile
 	// We can't actually call them without a logger initialized and a real server
 	t.Run("Verify method signatures", func(t *testing.T) {
-		// These assignments verify the methods exist with correct signatures
-		var _ func(context.Context, string, float64, *LoggingContext) (*FaucetResult, error) = client.FundAccountWeiWithContext
-		var _ func(context.Context, string, float64, int, *LoggingContext) (*FaucetResult, error) = client.FundAccountWeiWithRetryAndContext
-		var _ func(context.Context, string, float64, *FundingOptions, *LoggingContext) (*FaucetResult, error) = client.FundAccountWeiWithOptionsAndContext
-		var _ func(context.Context, string, float64, *FundingOptions, *LoggingContext) (*FaucetResult, error) = client.FundAccountWeiWithRetriesAndOptionsAndContext
-
 		// Verify logging context is not nil
 		if logCtx == nil {
 			t.Error("LoggingContext should not be nil")

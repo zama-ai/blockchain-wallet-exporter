@@ -17,8 +17,11 @@ import (
 )
 
 const (
-	MAX_WORKER_GOROUTINES = 20              // Maximum concurrent workers for processing accounts
-	CYCLE_SAFETY_MARGIN   = 5 * time.Second // Safety margin to prevent cycle overlap
+	MAX_WORKER_GOROUTINES      = 20               // Maximum concurrent workers for processing accounts
+	CYCLE_SAFETY_MARGIN        = 5 * time.Second  // Safety margin to prevent cycle overlap
+	MAX_FAUCET_RETRIES         = 3                // Maximum number of retry attempts (total attempts = 1 + retries)
+	PER_ATTEMPT_TIMEOUT        = 15 * time.Second // Timeout for each faucet funding attempt
+	PROCESSING_OVERHEAD_BUFFER = 10 * time.Second // Buffer for processing overhead (balance checks, etc.)
 )
 
 // RefundScheduler manages automatic account refunding based on balance thresholds
@@ -345,10 +348,19 @@ func (rs *RefundScheduler) processAccount(ctx context.Context, account *config.A
 		rs.logPrefix(), account.Name, currentBalanceDisplay, collectorUnit, currentBalanceBase, baseUnitName, *account.RefundThreshold, collectorUnit,
 		refundAmountDisplay, collectorUnit, refundAmountBase, baseUnitName, *account.RefundTarget, collectorUnit)
 
-	// Call faucet directly with base unit amount (maxRetries fixed at 3)
+	// Call faucet with custom funding options
+	// Use per-attempt timeout to ensure retries can complete within cycle timeout
 	logger.Debugf("%s Calling faucet with amount: %.0f %s for account %s", rs.logPrefix(), refundAmountBase, baseUnitName, account.Address)
+
+	opts := &faucet.FundingOptions{
+		WaitForConfirmation: true,
+		ConfirmationTimeout: PER_ATTEMPT_TIMEOUT,
+		PollInterval:        0, // Let it be calculated adaptively
+		MaxRetries:          MAX_FAUCET_RETRIES,
+	}
+
 	logCtx := &faucet.LoggingContext{NodeName: rs.node.Name}
-	faucetResult, err := rs.faucetClient.FundAccountWeiWithRetryAndContext(ctx, account.Address, refundAmountBase, 3, logCtx)
+	faucetResult, err := rs.faucetClient.FundAccountWeiWithRetriesAndOptionsAndContext(ctx, account.Address, refundAmountBase, opts, logCtx)
 	if err != nil {
 		event.Error = fmt.Errorf("failed to fund account: %w", err)
 		event.Duration = time.Since(startTime)
@@ -439,31 +451,61 @@ func (rs *RefundScheduler) scheduleInterval(now time.Time) (time.Duration, bool)
 }
 
 // cycleTimeout computes the timeout for a single refund cycle
-// Uses the configured autoRefund.timeout as base, capped by schedule interval
+// Accounts for retry attempts to ensure each attempt gets adequate time
 func (rs *RefundScheduler) cycleTimeout(now time.Time) time.Duration {
-	// Base timeout from config (default 30s)
-	baseTimeout := time.Duration(rs.node.AutoRefund.Timeout) * time.Second
+	// Calculate minimum timeout needed for retry logic:
+	// - Total attempts = 1 initial + MAX_FAUCET_RETRIES retries
+	// - Each attempt needs PER_ATTEMPT_TIMEOUT for confirmation
+	// - Exponential backoff between retries: 1s, 4s, 9s... = sum of (attempt²)
+	// - Add processing overhead buffer
+
+	totalAttempts := 1 + MAX_FAUCET_RETRIES
+
+	// Calculate total backoff time for exponential backoff (attempt * attempt seconds)
+	// For 3 retries: 1² + 2² + 3² = 1 + 4 + 9 = 14 seconds
+	totalBackoff := time.Duration(0)
+	for attempt := 1; attempt <= MAX_FAUCET_RETRIES; attempt++ {
+		totalBackoff += time.Duration(attempt*attempt) * time.Second
+	}
+
+	// Minimum timeout = (attempts × per-attempt timeout) + backoff + processing overhead
+	minTimeout := time.Duration(totalAttempts)*PER_ATTEMPT_TIMEOUT + totalBackoff + PROCESSING_OVERHEAD_BUFFER
+
+	// Start with the calculated minimum timeout
+	calculatedTimeout := minTimeout
+
+	// If config specifies a timeout, use the larger of the two
+	if rs.node.AutoRefund.Timeout > 0 {
+		configTimeout := time.Duration(rs.node.AutoRefund.Timeout) * time.Second
+		if configTimeout > calculatedTimeout {
+			calculatedTimeout = configTimeout
+			logger.Debugf("%s Using config timeout %v (calculated min: %v)", rs.logPrefix(), configTimeout, minTimeout)
+		} else {
+			logger.Debugf("%s Using calculated timeout %v (config: %v insufficient for %d retries)",
+				rs.logPrefix(), calculatedTimeout, configTimeout, MAX_FAUCET_RETRIES)
+		}
+	}
 
 	// Try to get the schedule interval
 	interval, ok := rs.scheduleInterval(now)
 	if !ok || interval <= 0 {
-		// Can't determine interval, use base timeout
-		logger.Debugf("%s Using base timeout %v (schedule interval unknown)", rs.logPrefix(), baseTimeout)
-		return baseTimeout
+		// Can't determine interval, use calculated timeout
+		logger.Debugf("%s Using calculated timeout %v (schedule interval unknown)", rs.logPrefix(), calculatedTimeout)
+		return calculatedTimeout
 	}
 
 	// Cap timeout to interval minus safety margin to prevent overlap
 	if interval > CYCLE_SAFETY_MARGIN {
 		intervalCap := interval - CYCLE_SAFETY_MARGIN
-		if baseTimeout > intervalCap {
-			logger.Debugf("%s Capping timeout from %v to %v based on schedule interval %v",
-				rs.logPrefix(), baseTimeout, intervalCap, interval)
+		if calculatedTimeout > intervalCap {
+			logger.Warnf("%s Capping timeout from %v to %v based on schedule interval %v - retries may not complete",
+				rs.logPrefix(), calculatedTimeout, intervalCap, interval)
 			return intervalCap
 		}
 	}
 
-	logger.Debugf("%s Using base timeout %v (schedule interval %v)", rs.logPrefix(), baseTimeout, interval)
-	return baseTimeout
+	logger.Debugf("%s Using calculated timeout %v (schedule interval %v)", rs.logPrefix(), calculatedTimeout, interval)
+	return calculatedTimeout
 }
 
 func (rs *RefundScheduler) baseUnitName() string {
