@@ -145,7 +145,7 @@ func TestProcessAccount_NoRefundNeeded(t *testing.T) {
 		RefundTarget:    &refundTarget,
 	}
 
-	event := rs.processAccount(account)
+	event := rs.processAccount(context.Background(), account)
 
 	if event != nil {
 		t.Errorf("Expected no refund event, but got one: %+v", event)
@@ -191,7 +191,7 @@ func TestProcessAccount_RefundSuccessful(t *testing.T) {
 		RefundTarget:    &refundTarget,
 	}
 
-	event := rs.processAccount(account)
+	event := rs.processAccount(context.Background(), account)
 
 	if !faucetCalled {
 		t.Error("Expected faucet to be called, but it wasn't")
@@ -234,7 +234,7 @@ func TestProcessAccount_CollectorError(t *testing.T) {
 		RefundTarget:    &refundTarget,
 	}
 
-	event := rs.processAccount(account)
+	event := rs.processAccount(context.Background(), account)
 
 	if event == nil {
 		t.Fatal("Expected an error event, but got nil")
@@ -276,7 +276,7 @@ func TestProcessAccount_HealthCheckFailed(t *testing.T) {
 		RefundTarget:    &refundTarget,
 	}
 
-	event := rs.processAccount(account)
+	event := rs.processAccount(context.Background(), account)
 
 	if event == nil {
 		t.Fatal("Expected an error event, but got nil")
@@ -319,7 +319,7 @@ func TestProcessAccount_FaucetError(t *testing.T) {
 		RefundTarget:    &refundTarget,
 	}
 
-	event := rs.processAccount(account)
+	event := rs.processAccount(context.Background(), account)
 
 	if event == nil {
 		t.Fatal("Expected an error event, but got nil")
@@ -809,7 +809,7 @@ func TestSchedulerProcessAccounts(t *testing.T) {
 		ctx:              context.Background(),
 	}
 
-	events := rs.processAccounts()
+	events := rs.processAccounts(context.Background())
 
 	if len(events) != 2 {
 		t.Errorf("Expected 2 events, got %d", len(events))
@@ -899,7 +899,7 @@ func TestSchedulerProcessAccounts_ConcurrencyLimit(t *testing.T) {
 	logger.Infof("Testing concurrency limit with %d accounts and max %d workers", len(node.Accounts), MAX_WORKER_GOROUTINES)
 
 	start := time.Now()
-	events := rs.processAccounts()
+	events := rs.processAccounts(context.Background())
 	duration := time.Since(start)
 
 	// Verify results
@@ -1044,5 +1044,197 @@ func TestSchedulerManager_GetSchedulerInfo(t *testing.T) {
 				t.Error("Did not expect faucet config for disabled node")
 			}
 		}
+	}
+}
+
+// TestScheduleInterval_EveryFormat tests parsing of "@every <duration>" schedule format
+func TestScheduleInterval_EveryFormat(t *testing.T) {
+	tests := []struct {
+		name     string
+		schedule string
+		wantOk   bool
+		expected time.Duration
+	}{
+		{
+			name:     "@every 1 minute",
+			schedule: "@every 1m",
+			wantOk:   true,
+			expected: 1 * time.Minute,
+		},
+		{
+			name:     "@every 30 minutes",
+			schedule: "@every 30m",
+			wantOk:   true,
+			expected: 30 * time.Minute,
+		},
+		{
+			name:     "@every 5 seconds",
+			schedule: "@every 5s",
+			wantOk:   true,
+			expected: 5 * time.Second,
+		},
+		{
+			name:     "@every with spaces",
+			schedule: "@every  2h30m",
+			wantOk:   true,
+			expected: 2*time.Hour + 30*time.Minute,
+		},
+		{
+			name:     "cron expression (not @every)",
+			schedule: "*/5 * * * *",
+			wantOk:   false, // Will return false when scheduler not running
+		},
+		{
+			name:     "invalid @every format",
+			schedule: "@every invalid",
+			wantOk:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node := createTestNodeConfig("test-node", true)
+			node.AutoRefund.Schedule = tt.schedule
+
+			rs := &RefundScheduler{
+				node: node,
+				ctx:  context.Background(),
+			}
+
+			interval, ok := rs.scheduleInterval(time.Now())
+
+			if ok != tt.wantOk {
+				t.Errorf("scheduleInterval() ok = %v, want %v", ok, tt.wantOk)
+			}
+
+			if tt.wantOk && interval != tt.expected {
+				t.Errorf("scheduleInterval() interval = %v, want %v", interval, tt.expected)
+			}
+		})
+	}
+}
+
+// TestCycleTimeout_BaseTimeout tests that base timeout is used when no interval cap applies
+func TestCycleTimeout_BaseTimeout(t *testing.T) {
+	node := createTestNodeConfig("test-node", true)
+	node.AutoRefund.Schedule = "@every 30m"
+	node.AutoRefund.Timeout = 30 // 30 seconds
+
+	rs := &RefundScheduler{
+		node: node,
+		ctx:  context.Background(),
+	}
+
+	timeout := rs.cycleTimeout(time.Now())
+
+	expected := 30 * time.Second
+	if timeout != expected {
+		t.Errorf("cycleTimeout() = %v, want %v (base timeout should be used when interval is much larger)", timeout, expected)
+	}
+}
+
+// TestCycleTimeout_IntervalCap tests that timeout is capped by schedule interval
+func TestCycleTimeout_IntervalCap(t *testing.T) {
+	node := createTestNodeConfig("test-node", true)
+	node.AutoRefund.Schedule = "@every 1m"
+	node.AutoRefund.Timeout = 90 // 90 seconds, longer than interval
+
+	rs := &RefundScheduler{
+		node: node,
+		ctx:  context.Background(),
+	}
+
+	timeout := rs.cycleTimeout(time.Now())
+
+	// Should be capped to interval (60s) minus safety margin (5s) = 55s
+	expected := 60*time.Second - CYCLE_SAFETY_MARGIN
+	if timeout != expected {
+		t.Errorf("cycleTimeout() = %v, want %v (should be capped by interval)", timeout, expected)
+	}
+}
+
+// TestCycleTimeout_ShortInterval tests behavior with very short intervals
+func TestCycleTimeout_ShortInterval(t *testing.T) {
+	node := createTestNodeConfig("test-node", true)
+	node.AutoRefund.Schedule = "@every 3s" // Very short interval
+	node.AutoRefund.Timeout = 30
+
+	rs := &RefundScheduler{
+		node: node,
+		ctx:  context.Background(),
+	}
+
+	timeout := rs.cycleTimeout(time.Now())
+
+	// With 3s interval and 5s safety margin, we can't apply the cap (interval <= margin)
+	// So base timeout should be used
+	expected := 30 * time.Second
+	if timeout != expected {
+		t.Errorf("cycleTimeout() = %v, want %v (base timeout should be used when interval too short)", timeout, expected)
+	}
+}
+
+// TestCycleTimeout_UnknownInterval tests behavior when interval can't be determined
+func TestCycleTimeout_UnknownInterval(t *testing.T) {
+	node := createTestNodeConfig("test-node", true)
+	node.AutoRefund.Schedule = "* * * * *" // Cron expression, but scheduler not running
+	node.AutoRefund.Timeout = 45
+
+	rs := &RefundScheduler{
+		node: node,
+		ctx:  context.Background(),
+		// Note: cron not initialized/running, so interval can't be determined
+	}
+
+	timeout := rs.cycleTimeout(time.Now())
+
+	// Should fall back to base timeout
+	expected := 45 * time.Second
+	if timeout != expected {
+		t.Errorf("cycleTimeout() = %v, want %v (should use base timeout when interval unknown)", timeout, expected)
+	}
+}
+
+// TestMaxRetriesFixed verifies that maxRetries is always 3
+func TestMaxRetriesFixed(t *testing.T) {
+	var capturedMaxRetries int
+	mockCollector := &mockModuleCollector{
+		balance: 2.0, // Below threshold
+	}
+
+	mockFaucet := &mockFauceter{
+		fundWithRetryFunc: func(ctx context.Context, address string, amountWei float64, maxRetries int) (*faucet.FaucetResult, error) {
+			capturedMaxRetries = maxRetries
+			return &faucet.FaucetResult{
+				Success:   true,
+				Confirmed: true,
+			}, nil
+		},
+	}
+
+	currencyRegistry := currency.NewDefaultRegistry()
+	node := createTestNodeConfig("test-node", true)
+
+	rs := &RefundScheduler{
+		node:             node,
+		collector:        mockCollector,
+		currencyRegistry: currencyRegistry,
+		faucetClient:     mockFaucet,
+		ctx:              context.Background(),
+	}
+
+	refundThreshold := 5.0
+	refundTarget := 10.0
+	account := &config.Account{
+		Address:         "0x1234567890123456789012345678901234567890",
+		Name:            "test-account",
+		RefundThreshold: &refundThreshold,
+		RefundTarget:    &refundTarget,
+	}
+
+	_ = rs.processAccount(context.Background(), account)
+
+	if capturedMaxRetries != 3 {
+		t.Errorf("Expected maxRetries to be 3 (hardcoded), but got %d", capturedMaxRetries)
 	}
 }
