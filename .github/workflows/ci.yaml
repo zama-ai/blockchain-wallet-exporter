@@ -113,7 +113,7 @@ jobs:
             echo "VERSION=${SHORT_SHA}" >> $GITHUB_ENV
             echo "PUBLISH_LATEST=false" >> $GITHUB_ENV
             echo "GITHUB_RELEASE=false" >> $GITHUB_ENV
-            echo "SHOULD_PUBLISH=false" >> $GITHUB_ENV
+            echo "SHOULD_PUBLISH=true" >> $GITHUB_ENV
             
             # Create local tag for GoReleaser
             LOCAL_TAG="v0.0.0-pr.${SHORT_SHA}"
