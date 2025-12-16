@@ -29,6 +29,22 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    name: Lint
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7.0.1
+        with:
+          args: --timeout=10m
+          version: 'latest'
+
   unit-tests:
     runs-on: ubuntu-latest
     name: Unit tests
@@ -38,13 +54,14 @@ jobs:
         with:
           go-version-file: 'go.mod'
       - run: make test
+
   build-docker:
     runs-on: ubuntu-latest
     name: Build and Push Docker image
     permissions:
       contents: write
       packages: write
-    needs: unit-tests
+    needs: [lint, unit-tests]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -83,7 +100,7 @@ jobs:
             
             echo "Manual build - VERSION=${SHORT_SHA}, PUBLISH=${{ github.event.inputs.publish }}"
           elif [ "${{ github.ref_type }}" = "tag" ]; then
-            # Tag release: use tag name, publish everything
+            # Tag release: use tag name, publish everything including latest
             VERSION="${{ github.ref_name }}"
             echo "VERSION=${VERSION}" >> $GITHUB_ENV
             echo "PUBLISH_LATEST=true" >> $GITHUB_ENV
@@ -91,13 +108,19 @@ jobs:
             echo "SHOULD_PUBLISH=true" >> $GITHUB_ENV
             echo "Tag release - VERSION=${VERSION}"
           else
-            # PR/branch: use short SHA, don't publish
-            VERSION=$(git rev-parse --short HEAD)
-            echo "VERSION=${VERSION}" >> $GITHUB_ENV
+            # PR/branch: use short SHA, publish to registry (no latest, no GH release)
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            echo "VERSION=${SHORT_SHA}" >> $GITHUB_ENV
             echo "PUBLISH_LATEST=false" >> $GITHUB_ENV
             echo "GITHUB_RELEASE=false" >> $GITHUB_ENV
-            echo "SHOULD_PUBLISH=false" >> $GITHUB_ENV
-            echo "PR/Branch build - VERSION=${VERSION}"
+            echo "SHOULD_PUBLISH=true" >> $GITHUB_ENV
+            
+            # Create local tag for GoReleaser
+            LOCAL_TAG="v0.0.0-pr.${SHORT_SHA}"
+            git tag "${LOCAL_TAG}"
+            echo "Created local tag: ${LOCAL_TAG}"
+            
+            echo "PR/Branch build - VERSION=${SHORT_SHA}, will publish to registry"
           fi
 
       - name: Run GoReleaser
