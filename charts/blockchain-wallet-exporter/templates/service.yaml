@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "blockchain-wallet-exporter.fullname" . }}
+  labels:
+    {{- include "blockchain-wallet-exporter.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.portName | default "metrics" }}
+      protocol: TCP
+      name: {{ .Values.service.portName | default "metrics" }}
+  selector:
+    {{- include "blockchain-wallet-exporter.selectorLabels" . | nindent 4 }}
