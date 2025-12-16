@@ -85,15 +85,38 @@ nodes:
       env: test
 ```
 
-## Building and Running
+## Installation
 
-### Prerequisites
+### Kubernetes with Helm (Recommended)
+
+The easiest way to deploy the Blockchain Wallet Exporter on Kubernetes is using our Helm chart:
+
+```bash
+# Install from GitHub Container Registry
+helm install blockchain-exporter \
+  oci://ghcr.io/zama-ai/blockchain-wallet-exporter/blockchain-wallet-exporter \
+  --version 0.1.0 \
+  --namespace monitoring \
+  --create-namespace
+
+# Or install with custom configuration
+helm install blockchain-exporter \
+  oci://ghcr.io/zama-ai/blockchain-wallet-exporter/blockchain-wallet-exporter \
+  --version 0.1.0 \
+  --values my-config.yaml
+```
+
+For detailed Helm chart documentation, see the [chart README](charts/blockchain-wallet-exporter/README.md).
+
+### Building and Running Locally
+
+#### Prerequisites
 
 - Go 1.22.3 or later
 - Docker (for building Docker images)
 - Prometheus (for metrics collection)
 
-### Build
+#### Build
 
 To build the application, run:
 
@@ -101,7 +124,7 @@ To build the application, run:
 make build
 ```
 
-### Run
+#### Run
 
 To run the application using Docker Compose, execute:
 
