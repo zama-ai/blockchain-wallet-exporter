@@ -1,5 +1,9 @@
 # Blockchain Wallet Exporter
 
+[![CI](https://github.com/zama-ai/blockchain-wallet-exporter/actions/workflows/ci.yaml/badge.svg)](https://github.com/zama-ai/blockchain-wallet-exporter/actions/workflows/ci.yaml)
+[![codecov](https://codecov.io/gh/zama-ai/blockchain-wallet-exporter/branch/main/graph/badge.svg)](https://codecov.io/gh/zama-ai/blockchain-wallet-exporter)
+[![Go Report Card](https://goreportcard.com/badge/github.com/zama-ai/blockchain-wallet-exporter)](https://goreportcard.com/report/github.com/zama-ai/blockchain-wallet-exporter)
+
 ## Overview
 
 The Blockchain Wallet Exporter is a tool designed to retrieve and export wallet balances from different blockchains, specifically Cosmos and Ethereum, as metrics. It is built using Golang for seamless integration with Prometheus and includes an optional auto-refund feature for maintaining wallet balances.
