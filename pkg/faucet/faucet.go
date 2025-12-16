@@ -98,8 +98,8 @@ type FundingOptions struct {
 func DefaultFundingOptions() *FundingOptions {
 	return &FundingOptions{
 		WaitForConfirmation: true, // Wait for on-chain confirmation by default for safety
-		ConfirmationTimeout: 5 * time.Minute,
-		PollInterval:        10 * time.Second,
+		ConfirmationTimeout: 1 * time.Minute,
+		PollInterval:        5 * time.Second,
 		MaxRetries:          3,
 	}
 }
@@ -261,7 +261,7 @@ func (c *Client) FundAccountWeiWithConfirmation(ctx context.Context, address str
 
 // GetSessionStatus retrieves the current status of a session
 func (c *Client) GetSessionStatus(ctx context.Context, session string) (*SessionStatusResponse, error) {
-	url := fmt.Sprintf("%s/api/getSession?session=%s", c.baseURL, session)
+	url := fmt.Sprintf("%s/api/getSessionStatus?session=%s", c.baseURL, session)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
