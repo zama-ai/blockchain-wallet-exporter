@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,7 +17,8 @@ import (
 )
 
 const (
-	MAX_WORKER_GOROUTINES = 20 // Maximum concurrent workers for processing accounts
+	MAX_WORKER_GOROUTINES = 20              // Maximum concurrent workers for processing accounts
+	CYCLE_SAFETY_MARGIN   = 5 * time.Second // Safety margin to prevent cycle overlap
 )
 
 // RefundScheduler manages automatic account refunding based on balance thresholds
@@ -153,7 +155,14 @@ func (rs *RefundScheduler) executeRefundCheck() {
 	logger.Infof("%s Starting auto-refund check cycle", rs.logPrefix())
 	startTime := time.Now()
 
-	events := rs.processAccounts()
+	// Create cycle context with dynamic timeout based on config and schedule
+	cycleTimeout := rs.cycleTimeout(startTime)
+	cycleCtx, cancel := context.WithTimeout(rs.ctx, cycleTimeout)
+	defer cancel()
+
+	logger.Debugf("%s Cycle timeout set to %v", rs.logPrefix(), cycleTimeout)
+
+	events := rs.processAccounts(cycleCtx)
 
 	// Log summary
 	successCount := 0
@@ -176,7 +185,7 @@ func (rs *RefundScheduler) executeRefundCheck() {
 }
 
 // processAccounts checks all accounts and refunds those below threshold
-func (rs *RefundScheduler) processAccounts() []*RefundEvent {
+func (rs *RefundScheduler) processAccounts(ctx context.Context) []*RefundEvent {
 	// Filter accounts that have refund configuration
 	var refundAccounts []*config.Account
 	for _, account := range rs.node.Accounts {
@@ -199,7 +208,7 @@ func (rs *RefundScheduler) processAccounts() []*RefundEvent {
 		rs.logPrefix(), len(refundAccounts), MAX_WORKER_GOROUTINES)
 
 	err := flowmatic.Each(MAX_WORKER_GOROUTINES, refundAccounts, func(account *config.Account) error {
-		event := rs.processAccount(account)
+		event := rs.processAccount(ctx, account)
 		if event != nil {
 			eventChan <- event
 		}
@@ -223,12 +232,7 @@ func (rs *RefundScheduler) processAccounts() []*RefundEvent {
 }
 
 // processAccount processes a single account for refunding
-func (rs *RefundScheduler) processAccount(account *config.Account) *RefundEvent {
-	// Use a longer timeout to accommodate faucet confirmation (default 5 minutes)
-	// Add extra buffer for balance check and retries
-	ctx, cancel := context.WithTimeout(rs.ctx, 10*time.Second)
-	defer cancel()
-
+func (rs *RefundScheduler) processAccount(ctx context.Context, account *config.Account) *RefundEvent {
 	startTime := time.Now()
 	event := &RefundEvent{
 		NodeName:       rs.node.Name,
@@ -341,9 +345,9 @@ func (rs *RefundScheduler) processAccount(account *config.Account) *RefundEvent 
 		rs.logPrefix(), account.Name, currentBalanceDisplay, collectorUnit, currentBalanceBase, baseUnitName, *account.RefundThreshold, collectorUnit,
 		refundAmountDisplay, collectorUnit, refundAmountBase, baseUnitName, *account.RefundTarget, collectorUnit)
 
-	// Call faucet directly with base unit amount
+	// Call faucet directly with base unit amount (maxRetries fixed at 3)
 	logger.Debugf("%s Calling faucet with amount: %.0f %s for account %s", rs.logPrefix(), refundAmountBase, baseUnitName, account.Address)
-	faucetResult, err := rs.faucetClient.FundAccountWeiWithRetry(ctx, account.Address, refundAmountBase, 2)
+	faucetResult, err := rs.faucetClient.FundAccountWeiWithRetry(ctx, account.Address, refundAmountBase, 3)
 	if err != nil {
 		event.Error = fmt.Errorf("failed to fund account: %w", err)
 		event.Duration = time.Since(startTime)
@@ -389,6 +393,9 @@ func (rs *RefundScheduler) IsRunning() bool {
 
 // GetNextRun returns the next scheduled run time
 func (rs *RefundScheduler) GetNextRun() time.Time {
+	rs.mutex.RLock()
+	defer rs.mutex.RUnlock()
+
 	if !rs.running {
 		return time.Time{}
 	}
@@ -397,6 +404,65 @@ func (rs *RefundScheduler) GetNextRun() time.Time {
 		return entries[0].Next
 	}
 	return time.Time{}
+}
+
+// scheduleInterval attempts to determine the interval between scheduled runs
+// Returns (interval, true) if successfully parsed, (0, false) otherwise
+func (rs *RefundScheduler) scheduleInterval(now time.Time) (time.Duration, bool) {
+	schedule := rs.node.AutoRefund.Schedule
+
+	// Try parsing "@every <duration>" format using stdlib
+	if strings.HasPrefix(schedule, "@every ") {
+		durationStr := strings.TrimPrefix(schedule, "@every ")
+		durationStr = strings.TrimSpace(durationStr)
+		if duration, err := time.ParseDuration(durationStr); err == nil && duration > 0 {
+			return duration, true
+		}
+	}
+
+	// For standard cron expressions, use the next scheduled run time
+	rs.mutex.RLock()
+	defer rs.mutex.RUnlock()
+
+	if rs.running {
+		entries := rs.cron.Entries()
+		if len(entries) > 0 {
+			nextRun := entries[0].Next
+			if !nextRun.IsZero() && nextRun.After(now) {
+				return nextRun.Sub(now), true
+			}
+		}
+	}
+
+	return 0, false
+}
+
+// cycleTimeout computes the timeout for a single refund cycle
+// Uses the configured autoRefund.timeout as base, capped by schedule interval
+func (rs *RefundScheduler) cycleTimeout(now time.Time) time.Duration {
+	// Base timeout from config (default 30s)
+	baseTimeout := time.Duration(rs.node.AutoRefund.Timeout) * time.Second
+
+	// Try to get the schedule interval
+	interval, ok := rs.scheduleInterval(now)
+	if !ok || interval <= 0 {
+		// Can't determine interval, use base timeout
+		logger.Debugf("%s Using base timeout %v (schedule interval unknown)", rs.logPrefix(), baseTimeout)
+		return baseTimeout
+	}
+
+	// Cap timeout to interval minus safety margin to prevent overlap
+	if interval > CYCLE_SAFETY_MARGIN {
+		intervalCap := interval - CYCLE_SAFETY_MARGIN
+		if baseTimeout > intervalCap {
+			logger.Debugf("%s Capping timeout from %v to %v based on schedule interval %v",
+				rs.logPrefix(), baseTimeout, intervalCap, interval)
+			return intervalCap
+		}
+	}
+
+	logger.Debugf("%s Using base timeout %v (schedule interval %v)", rs.logPrefix(), baseTimeout, interval)
+	return baseTimeout
 }
 
 func (rs *RefundScheduler) baseUnitName() string {
