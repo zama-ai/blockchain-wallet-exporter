@@ -69,6 +69,14 @@ func (m *mockFauceter) FundAccountWeiWithRetry(ctx context.Context, address stri
 	return nil, fmt.Errorf("mock FundAccountWeiWithRetry not implemented")
 }
 
+func (m *mockFauceter) FundAccountWeiWithRetryAndContext(ctx context.Context, address string, amountWei float64, maxRetries int, logCtx *faucet.LoggingContext) (*faucet.FaucetResult, error) {
+	// Delegate to the same function, ignoring the logging context in tests
+	if m.fundWithRetryFunc != nil {
+		return m.fundWithRetryFunc(ctx, address, amountWei, maxRetries)
+	}
+	return nil, fmt.Errorf("mock FundAccountWeiWithRetryAndContext not implemented")
+}
+
 // Helper function to create a valid node configuration for testing
 func createTestNodeConfig(nodeName string, autoRefundEnabled bool) *config.Node {
 	node := &config.Node{

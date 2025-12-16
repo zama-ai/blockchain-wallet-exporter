@@ -347,7 +347,8 @@ func (rs *RefundScheduler) processAccount(ctx context.Context, account *config.A
 
 	// Call faucet directly with base unit amount (maxRetries fixed at 3)
 	logger.Debugf("%s Calling faucet with amount: %.0f %s for account %s", rs.logPrefix(), refundAmountBase, baseUnitName, account.Address)
-	faucetResult, err := rs.faucetClient.FundAccountWeiWithRetry(ctx, account.Address, refundAmountBase, 3)
+	logCtx := &faucet.LoggingContext{NodeName: rs.node.Name}
+	faucetResult, err := rs.faucetClient.FundAccountWeiWithRetryAndContext(ctx, account.Address, refundAmountBase, 3, logCtx)
 	if err != nil {
 		event.Error = fmt.Errorf("failed to fund account: %w", err)
 		event.Duration = time.Since(startTime)
