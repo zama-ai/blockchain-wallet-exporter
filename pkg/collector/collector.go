@@ -46,17 +46,17 @@ type BaseResult struct {
 
 // BaseCollector provides enhanced common functionality for all collectors
 type BaseCollector struct {
-	nodeName        string
-	module          Module
-	metrics         *prometheus.GaugeVec
-	health          *prometheus.GaugeVec
-	nodeUnreachable prometheus.Counter
-	processor       IModuleCollector
-	timeout         time.Duration
-	unit            *currency.Unit
-	accounts        []*config.Account
-	labels          map[string]string
-	collectMutex    sync.Mutex
+	nodeName      string
+	module        Module
+	metrics       *prometheus.GaugeVec
+	health        *prometheus.GaugeVec
+	scrapesFailed prometheus.Counter
+	processor     IModuleCollector
+	timeout       time.Duration
+	unit          *currency.Unit
+	accounts      []*config.Account
+	labels        map[string]string
+	collectMutex  sync.Mutex
 }
 
 type PrometheusCollector interface {
@@ -104,7 +104,7 @@ func NewBaseCollector(node *config.Node, processor IModuleCollector, opts ...Col
 	if node.MetricsUnit != nil {
 		constLabels["unit"] = node.MetricsUnit.Symbol
 	}
-	logger.Infof("constLabels: %v", constLabels)
+	logger.Debugf("constLabels: %v", constLabels)
 
 	collector := &BaseCollector{
 		nodeName:  node.Name,
@@ -130,10 +130,10 @@ func NewBaseCollector(node *config.Node, processor IModuleCollector, opts ...Col
 			},
 			[]string{"address", "account_name"},
 		),
-		nodeUnreachable: prometheus.NewCounter(
+		scrapesFailed: prometheus.NewCounter(
 			prometheus.CounterOpts{
-				Name:        "blockchain_wallet_node_unreachable_total",
-				Help:        "Number of scrapes where 50% or more accounts failed to retrieve balance",
+				Name:        "blockchain_wallet_scrapes_failed_total",
+				Help:        "Total number of scrape attempts where 50% or more accounts failed due to network errors",
 				ConstLabels: constLabelsHealth,
 			},
 		),
@@ -251,7 +251,7 @@ func (c *BaseCollector) collectMetrics() []*BaseResult {
 		if int(networkFailureCount) >= threshold {
 			logger.Warnf("node %s is unreachable or degraded: %d/%d accounts failed with network errors (threshold: >= %d)",
 				c.nodeName, networkFailureCount, totalAccounts, threshold)
-			c.nodeUnreachable.Inc()
+			c.scrapesFailed.Inc()
 		}
 	}
 
@@ -262,7 +262,7 @@ func (c *BaseCollector) collectMetrics() []*BaseResult {
 func (c *BaseCollector) Describe(ch chan<- *prometheus.Desc) {
 	c.metrics.Describe(ch)
 	c.health.Describe(ch)
-	c.nodeUnreachable.Describe(ch)
+	c.scrapesFailed.Describe(ch)
 }
 
 func (c *BaseCollector) Collect(ch chan<- prometheus.Metric) {
@@ -290,7 +290,7 @@ func (c *BaseCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 	}
 
-	c.nodeUnreachable.Collect(ch)
+	c.scrapesFailed.Collect(ch)
 }
 
 func (c *BaseCollector) Name() string {

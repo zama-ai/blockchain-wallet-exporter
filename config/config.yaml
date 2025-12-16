@@ -18,7 +18,7 @@ nodes:
     
     # Explicit auto-refund configuration for this node
     autoRefund:
-      enabled: true
+      enabled: false
       schedule: "@every 1m"  # Frequent checks for gateway
       faucetUrl: "http://localhost:8080"  # Gateway-specific faucet
       timeout: 30
@@ -47,8 +47,9 @@ nodes:
   - name: conduit-gateway-erc20
     module: erc20
     httpAddr: "https://rpc.testnet.zama.org"
+    # Automatically discover ERC20 token metadata (symbol, decimals) during startup
+    # If RPC endpoint is unreachable, the exporter will fail to start
     autoUnitDiscovery: true
-    
     # Explicit auto-refund configuration for this node
     autoRefund:
       enabled: false
@@ -71,11 +72,12 @@ nodes:
   # Host node with explicit autoRefund configuration
   - name: l1-host
     module: evm
-    httpAddr: "https://l1-eth-node-zws-dev-http.diplodocus-boa.ts.net"
+    # public node RPC sepolia
+    httpAddr: "https://ethereum-sepolia-rpc.publicnode.com"
     
     # Explicit auto-refund configuration for this node
     autoRefund:
-      enabled: true
+      enabled: false
       schedule: "@every 1m"  # Frequent checks for host
       faucetUrl: "http://localhost:8081"  # Gateway-specific faucet
       timeout: 30
