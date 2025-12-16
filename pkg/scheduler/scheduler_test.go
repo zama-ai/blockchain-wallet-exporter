@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/robfig/cron/v3"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/collector"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
@@ -75,6 +76,18 @@ func (m *mockFauceter) FundAccountWeiWithRetryAndContext(ctx context.Context, ad
 		return m.fundWithRetryFunc(ctx, address, amountWei, maxRetries)
 	}
 	return nil, fmt.Errorf("mock FundAccountWeiWithRetryAndContext not implemented")
+}
+
+func (m *mockFauceter) FundAccountWeiWithRetriesAndOptionsAndContext(ctx context.Context, address string, amountWei float64, opts *faucet.FundingOptions, logCtx *faucet.LoggingContext) (*faucet.FaucetResult, error) {
+	// Delegate to the same function, extracting maxRetries from opts
+	maxRetries := 3
+	if opts != nil && opts.MaxRetries > 0 {
+		maxRetries = opts.MaxRetries
+	}
+	if m.fundWithRetryFunc != nil {
+		return m.fundWithRetryFunc(ctx, address, amountWei, maxRetries)
+	}
+	return nil, fmt.Errorf("mock FundAccountWeiWithRetriesAndOptionsAndContext not implemented")
 }
 
 // Helper function to create a valid node configuration for testing
@@ -1135,9 +1148,10 @@ func TestCycleTimeout_BaseTimeout(t *testing.T) {
 
 	timeout := rs.cycleTimeout(time.Now())
 
-	expected := 30 * time.Second
-	if timeout != expected {
-		t.Errorf("cycleTimeout() = %v, want %v (base timeout should be used when interval is much larger)", timeout, expected)
+	// Should use calculated minimum (84s) since config timeout (30s) is insufficient for retries
+	expectedMin := 84 * time.Second
+	if timeout < expectedMin {
+		t.Errorf("cycleTimeout() = %v, want at least %v (calculated minimum for retries)", timeout, expectedMin)
 	}
 }
 
@@ -1175,10 +1189,10 @@ func TestCycleTimeout_ShortInterval(t *testing.T) {
 	timeout := rs.cycleTimeout(time.Now())
 
 	// With 3s interval and 5s safety margin, we can't apply the cap (interval <= margin)
-	// So base timeout should be used
-	expected := 30 * time.Second
-	if timeout != expected {
-		t.Errorf("cycleTimeout() = %v, want %v (base timeout should be used when interval too short)", timeout, expected)
+	// So calculated minimum timeout should be used (84s)
+	expectedMin := 84 * time.Second
+	if timeout < expectedMin {
+		t.Errorf("cycleTimeout() = %v, want at least %v (calculated minimum for retries)", timeout, expectedMin)
 	}
 }
 
@@ -1196,10 +1210,115 @@ func TestCycleTimeout_UnknownInterval(t *testing.T) {
 
 	timeout := rs.cycleTimeout(time.Now())
 
-	// Should fall back to base timeout
-	expected := 45 * time.Second
-	if timeout != expected {
-		t.Errorf("cycleTimeout() = %v, want %v (should use base timeout when interval unknown)", timeout, expected)
+	// Should use calculated minimum (84s) since it's larger than config timeout (45s)
+	expectedMin := 84 * time.Second
+	if timeout < expectedMin {
+		t.Errorf("cycleTimeout() = %v, want at least %v (calculated minimum for retries)", timeout, expectedMin)
+	}
+}
+
+// TestCycleTimeout_AccountsForRetries verifies that cycle timeout accounts for retry attempts
+func TestCycleTimeout_AccountsForRetries(t *testing.T) {
+	tests := []struct {
+		name          string
+		configTimeout int // in seconds
+		schedule      string
+		expectMinimum time.Duration
+		expectWarning bool
+	}{
+		{
+			name:          "Config timeout too short for retries",
+			configTimeout: 30,
+			schedule:      "@every 2m",
+			// Min = (4 attempts × 15s) + (1+4+9)s backoff + 10s buffer = 84s
+			expectMinimum: 84 * time.Second,
+			expectWarning: false,
+		},
+		{
+			name:          "Config timeout adequate",
+			configTimeout: 120,
+			schedule:      "@every 5m",
+			expectMinimum: 120 * time.Second,
+			expectWarning: false,
+		},
+		{
+			name:          "Schedule interval too short",
+			configTimeout: 30,
+			schedule:      "@every 30s",
+			// Will be capped to interval - safety margin
+			expectMinimum: 25 * time.Second,
+			expectWarning: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node := createTestNodeConfig("test-node", true)
+			node.AutoRefund.Timeout = tt.configTimeout
+			node.AutoRefund.Schedule = tt.schedule
+
+			// Create cron instance to enable interval calculation
+			cronInstance := cron.New()
+			_, err := cronInstance.AddFunc(tt.schedule, func() {})
+			if err != nil {
+				t.Fatalf("Failed to parse schedule: %v", err)
+			}
+			cronInstance.Start()
+			defer cronInstance.Stop()
+
+			rs := &RefundScheduler{
+				node: node,
+				cron: cronInstance,
+				ctx:  context.Background(),
+			}
+
+			timeout := rs.cycleTimeout(time.Now())
+
+			// For warning cases, timeout may be less than minimum
+			if tt.expectWarning {
+				if timeout > tt.expectMinimum {
+					t.Errorf("Expected timeout to be capped at or below %v, got %v", tt.expectMinimum, timeout)
+				}
+			} else {
+				if timeout < tt.expectMinimum {
+					t.Errorf("Timeout %v is less than expected minimum %v", timeout, tt.expectMinimum)
+				}
+			}
+		})
+	}
+}
+
+// TestCycleTimeout_MinimumForRetries verifies the minimum timeout calculation
+func TestCycleTimeout_MinimumForRetries(t *testing.T) {
+	// Calculate expected minimum:
+	// - 4 attempts (1 + 3 retries)
+	// - 15 seconds per attempt
+	// - Backoff: 1 + 4 + 9 = 14 seconds
+	// - Buffer: 10 seconds
+	expectedMin := (4 * 15) + 14 + 10 // = 84 seconds
+
+	node := createTestNodeConfig("test-node", true)
+	node.AutoRefund.Timeout = 0             // No config timeout
+	node.AutoRefund.Schedule = "@every 10m" // Long interval
+
+	cronInstance := cron.New()
+	_, err := cronInstance.AddFunc(node.AutoRefund.Schedule, func() {})
+	if err != nil {
+		t.Fatalf("Failed to parse schedule: %v", err)
+	}
+	cronInstance.Start()
+	defer cronInstance.Stop()
+
+	rs := &RefundScheduler{
+		node: node,
+		cron: cronInstance,
+		ctx:  context.Background(),
+	}
+
+	timeout := rs.cycleTimeout(time.Now())
+
+	if timeout < time.Duration(expectedMin)*time.Second {
+		t.Errorf("Timeout %v is less than calculated minimum %ds", timeout, expectedMin)
 	}
 }
 
