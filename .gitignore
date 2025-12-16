@@ -2,7 +2,6 @@ data/
 .circleci/
 coverage.out
 coverage.html
-blockchain-wallet-exporter
 !/cmd/blockchain-wallet-exporter/
 coverage.txt
 artifacts/

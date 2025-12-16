@@ -2,7 +2,11 @@ package collector
 
 import (
 	"context"
+	"errors"
+	"net"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/carlmjohnson/flowmatic"
@@ -11,6 +15,8 @@ import (
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/version"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -40,16 +46,17 @@ type BaseResult struct {
 
 // BaseCollector provides enhanced common functionality for all collectors
 type BaseCollector struct {
-	nodeName     string
-	module       Module
-	metrics      *prometheus.GaugeVec
-	health       *prometheus.GaugeVec
-	processor    IModuleCollector
-	timeout      time.Duration
-	unit         *currency.Unit
-	accounts     []*config.Account
-	labels       map[string]string
-	collectMutex sync.Mutex
+	nodeName        string
+	module          Module
+	metrics         *prometheus.GaugeVec
+	health          *prometheus.GaugeVec
+	nodeUnreachable prometheus.Counter
+	processor       IModuleCollector
+	timeout         time.Duration
+	unit            *currency.Unit
+	accounts        []*config.Account
+	labels          map[string]string
+	collectMutex    sync.Mutex
 }
 
 type PrometheusCollector interface {
@@ -123,6 +130,13 @@ func NewBaseCollector(node *config.Node, processor IModuleCollector, opts ...Col
 			},
 			[]string{"address", "account_name"},
 		),
+		nodeUnreachable: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name:        "blockchain_wallet_node_unreachable_total",
+				Help:        "Number of scrapes where 50% or more accounts failed to retrieve balance",
+				ConstLabels: constLabelsHealth,
+			},
+		),
 	}
 
 	// Apply options
@@ -133,11 +147,65 @@ func NewBaseCollector(node *config.Node, processor IModuleCollector, opts ...Col
 	return collector
 }
 
+// TODO: Uncomment this when we have a way to detect network errors
+// IsNodeUnreachable checks if an error indicates the node is unreachable (network error)
+// It excludes application-level errors like "balance not found" or conversion errors
+func IsNodeUnreachable(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for context deadline exceeded
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	// Check for net.Error (includes timeouts)
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+
+	// Check for gRPC status codes
+	if s, ok := status.FromError(err); ok {
+		switch s.Code() {
+		case codes.Unavailable, codes.DeadlineExceeded:
+			return true
+		}
+	}
+
+	errStr := strings.ToLower(err.Error())
+
+	// Check for common network error substrings
+	networkErrorPatterns := []string{
+		"connection refused",
+		"no such host",
+		"i/o timeout",
+		"dial tcp",
+		"no route to host",
+		"network is unreachable",
+		"connection reset",
+		"broken pipe",
+		"failed to connect",
+	}
+	for _, pattern := range networkErrorPatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // collectMetrics handles the concurrent collection of metrics with retry logic
 func (c *BaseCollector) collectMetrics() []*BaseResult {
 	results := make([]*BaseResult, 0)
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	defer cancel()
+
+	// Track network failures (thread-safe counter)
+	var networkFailureCount int32
+	totalAccounts := len(c.accounts)
 
 	// Create a buffered channel to collect results
 	resultsChan := make(chan *BaseResult, len(c.accounts))
@@ -148,6 +216,14 @@ func (c *BaseCollector) collectMetrics() []*BaseResult {
 		result, err := c.processor.CollectAccountBalance(ctx, account)
 		if err != nil {
 			logger.Errorf("error collecting metrics for account %s: %v", account.Address, err)
+
+			// TODO: Uncomment this when we have a way to detect network errors
+			//if isNodeUnreachable(err) {
+			//	atomic.AddInt32(&networkFailureCount, 1)
+			//}
+
+			atomic.AddInt32(&networkFailureCount, 1)
+
 			result = &BaseResult{
 				NodeName: c.nodeName,
 				Account:  *account,
@@ -169,6 +245,16 @@ func (c *BaseCollector) collectMetrics() []*BaseResult {
 		results = append(results, result)
 	}
 
+	// Check if 50% or more accounts failed with network errors
+	if totalAccounts > 0 {
+		threshold := (totalAccounts + 1) / 2
+		if int(networkFailureCount) >= threshold {
+			logger.Warnf("node %s is unreachable or degraded: %d/%d accounts failed with network errors (threshold: >= %d)",
+				c.nodeName, networkFailureCount, totalAccounts, threshold)
+			c.nodeUnreachable.Inc()
+		}
+	}
+
 	return results
 }
 
@@ -176,6 +262,7 @@ func (c *BaseCollector) collectMetrics() []*BaseResult {
 func (c *BaseCollector) Describe(ch chan<- *prometheus.Desc) {
 	c.metrics.Describe(ch)
 	c.health.Describe(ch)
+	c.nodeUnreachable.Describe(ch)
 }
 
 func (c *BaseCollector) Collect(ch chan<- prometheus.Metric) {
@@ -202,6 +289,8 @@ func (c *BaseCollector) Collect(ch chan<- prometheus.Metric) {
 			c.metrics.Reset()
 		}
 	}
+
+	c.nodeUnreachable.Collect(ch)
 }
 
 func (c *BaseCollector) Name() string {
