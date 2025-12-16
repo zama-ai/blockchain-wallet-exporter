@@ -112,7 +112,7 @@ For detailed Helm chart documentation, see the [chart README](charts/blockchain-
 
 #### Prerequisites
 
-- Go 1.22.3 or later
+- Go 1.23.x
 - Docker (for building Docker images)
 - Prometheus (for metrics collection)
 
@@ -150,10 +150,11 @@ make test-lint
 
 ## License
 
+Licensed under the **Apache License 2.0**. See [`LICENSE`](LICENSE).
 
 ## Contributing
 
-[Specify contribution guidelines here]
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development workflow, testing/linting, and PR guidelines.
 
 ## Contact
 
