@@ -362,18 +362,16 @@ func (rs *RefundScheduler) processAccount(account *config.Account) *RefundEvent 
 	event.Duration = time.Since(startTime)
 
 	if faucetResult.Success {
-		var logMsg string
+		// With WaitForConfirmation=true (default), Success implies Confirmed
 		if event.Confirmed && event.ClaimHash != "" {
 			// Transaction has been confirmed on-chain
-			logMsg = fmt.Sprintf("%s Successfully refunded account %s with %.6f %s (%.0f %s), session: %s, confirmed with tx: %s at block %d",
+			logger.Infof("%s Successfully refunded account %s with %.6f %s (%.0f %s), session: %s, confirmed with tx: %s at block %d",
 				rs.logPrefix(), account.Name, refundAmountDisplay, collectorUnit, event.AmountBaseUnit, baseUnitName, event.Session, event.ClaimHash, event.ClaimBlock)
 		} else {
-			// Transaction is queued but not yet confirmed
-			logMsg = fmt.Sprintf("%s Queued refund for account %s with %.6f %s (%.0f %s), session: %s, status: %s, claim status: %s",
+			// This should only happen if WaitForConfirmation=false (non-default)
+			logger.Infof("%s Queued refund for account %s with %.6f %s (%.0f %s), session: %s, status: %s, claim status: %s (not waiting for confirmation)",
 				rs.logPrefix(), account.Name, refundAmountDisplay, collectorUnit, event.AmountBaseUnit, baseUnitName, event.Session, event.Status, event.ClaimStatus)
 		}
-
-		logger.Infof(logMsg)
 	} else {
 		event.Error = fmt.Errorf("faucet funding failed: %v", faucetResult.Error)
 		logger.Errorf("%s Faucet funding failed for account %s: %v", rs.logPrefix(), account.Name, faucetResult.Error)
