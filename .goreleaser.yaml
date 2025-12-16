@@ -5,9 +5,11 @@ env:
 archives:
   - id: archive1
     builds: [ blockchain-wallet-exporter ]
-    name_template: '{{ .Binary }}-{{ .Tag }}-{{ .Os }}-{{ .Arch }}'
+    name_template: '{{ .Binary }}-{{ .Env.VERSION }}-{{ .Os }}-{{ .Arch }}'
+
 before:
   hooks:
+
 builds:
   - binary: blockchain-wallet-exporter
     id: blockchain-wallet-exporter
@@ -20,10 +22,10 @@ builds:
     goos:
       - darwin
       - linux
+    main: main.go
     ldflags:
       # The line below MUST align with the module in current provider/go.mod
-      - -X main.buildVersion={{ .Tag }} -X main.commit={{ .FullCommit }} -X main.date={{ .Date }}
-    main: main.go
+      - -X main.buildVersion={{ .Env.VERSION }} -X main.commit={{ .FullCommit }} -X main.date={{ .Date }}
 
 dockers:
   ##############
@@ -34,33 +36,42 @@ dockers:
       - blockchain-wallet-exporter
     goarch: amd64
     image_templates:
-      - "ghcr.io/zama-ai/blockchain-wallet-exporter/blockchain-wallet-exporter:{{ .Tag }}-amd64"
+      - "ghcr.io/zama-ai/blockchain-wallet-exporter/blockchain-wallet-exporter:{{ .Env.VERSION }}-amd64"
+      - '{{ if eq .Env.PUBLISH_LATEST "true" }}ghcr.io/zama-ai/blockchain-wallet-exporter/blockchain-wallet-exporter:latest-amd64{{ end }}'
     use: buildx
     dockerfile: "{{ .Env.DOCKERFILE_BLOCKCHAIN_WALLET_EXPORTER }}"
     build_flag_templates:
       - "--platform=linux/amd64"
-
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
       - "--label=org.opencontainers.image.description={{ .ProjectName }}"
-      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.version={{ .Env.VERSION }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
 
-      
   - goos: linux
     goarch: arm64
     ids:
       - blockchain-wallet-exporter
     image_templates:
-      - "ghcr.io/zama-ai/blockchain-wallet-exporter/blockchain-wallet-exporter:{{ .Tag }}-arm64"
+      - "ghcr.io/zama-ai/blockchain-wallet-exporter/blockchain-wallet-exporter:{{ .Env.VERSION }}-arm64"
+      - '{{ if eq .Env.PUBLISH_LATEST "true" }}ghcr.io/zama-ai/blockchain-wallet-exporter/blockchain-wallet-exporter:latest-arm64{{ end }}'
     use: buildx
     dockerfile: "{{ .Env.DOCKERFILE_BLOCKCHAIN_WALLET_EXPORTER }}"
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
       - "--label=org.opencontainers.image.description={{ .ProjectName }}"
-      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.version={{ .Env.VERSION }}"
       - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
 
+docker_manifests:
+  - name_template: "ghcr.io/zama-ai/blockchain-wallet-exporter/blockchain-wallet-exporter:{{ .Env.VERSION }}"
+    image_templates:
+      - "ghcr.io/zama-ai/blockchain-wallet-exporter/blockchain-wallet-exporter:{{ .Env.VERSION }}-amd64"
+      - "ghcr.io/zama-ai/blockchain-wallet-exporter/blockchain-wallet-exporter:{{ .Env.VERSION }}-arm64"
+  - name_template: '{{ if eq .Env.PUBLISH_LATEST "true" }}ghcr.io/zama-ai/blockchain-wallet-exporter/blockchain-wallet-exporter:latest{{ end }}'
+    image_templates:
+      - "ghcr.io/zama-ai/blockchain-wallet-exporter/blockchain-wallet-exporter:latest-amd64"
+      - "ghcr.io/zama-ai/blockchain-wallet-exporter/blockchain-wallet-exporter:latest-arm64"
 
 checksum:
   extra_files:
@@ -84,12 +95,11 @@ changelog:
     - title: "Bug fixes"
       regexp: '^.*?bug(\([[:word:]]+\))??!?:.+$'
       order: 1
-  #filters:
-  #  include:
-  #    - "^feat:"
-  #    - "^chore:"
+
 release:
-  disable: false
+  disable: '{{ ne .Env.GITHUB_RELEASE "true" }}'
   prerelease: auto
+
 snapshot:
-  name_template: '{{ .Tag }}-SNAPSHOT'
+  name_template: '{{ .Env.VERSION }}-SNAPSHOT'
+

@@ -170,27 +170,31 @@ func (c *Client) FundAccountWeiWithOptions(ctx context.Context, address string, 
 	switch {
 	// Case 1: Claim is queued or being processed
 	case claimResult.Status == "claiming" && claimResult.ClaimStatus != nil && *claimResult.ClaimStatus == "queue":
-		result.Success = true // Queued for processing (not yet confirmed)
-
 		if opts.WaitForConfirmation {
-			// Wait for confirmation
+			// Wait for confirmation before marking as success
 			confirmed, err := c.waitForConfirmation(ctx, sessionResp.Session, opts)
 			if err != nil {
-				logger.Warnf("Failed to wait for confirmation for session %s: %v", sessionResp.Session, err)
-				// Don't fail the entire operation, just log the warning
-			} else if confirmed != nil {
-				result.Confirmed = true
-				result.Status = confirmed.Status
-				if confirmed.ClaimStatus != nil {
-					result.ClaimStatus = *confirmed.ClaimStatus
-				}
-				if confirmed.ClaimBlock != nil {
-					result.ClaimBlock = *confirmed.ClaimBlock
-				}
-				if confirmed.ClaimHash != nil {
-					result.ClaimHash = *confirmed.ClaimHash
-				}
+				result.Error = fmt.Errorf("failed to confirm transaction: %w", err)
+				result.Duration = time.Since(startTime)
+				return result, result.Error
 			}
+
+			// Successfully confirmed
+			result.Success = true
+			result.Confirmed = true
+			result.Status = confirmed.Status
+			if confirmed.ClaimStatus != nil {
+				result.ClaimStatus = *confirmed.ClaimStatus
+			}
+			if confirmed.ClaimBlock != nil {
+				result.ClaimBlock = *confirmed.ClaimBlock
+			}
+			if confirmed.ClaimHash != nil {
+				result.ClaimHash = *confirmed.ClaimHash
+			}
+		} else {
+			// Not waiting for confirmation, just queued is considered success
+			result.Success = true
 		}
 
 	// Case 2: Claim is already finished (immediate confirmation)
@@ -229,17 +233,21 @@ func (c *Client) FundAccountWeiWithOptions(ctx context.Context, address string, 
 
 	result.Duration = time.Since(startTime)
 
-	// Log appropriate message
-	var logMsg string
-	if result.Confirmed && result.ClaimHash != "" {
-		logMsg = fmt.Sprintf("Successfully confirmed faucet claim for address %s with amount %.0f wei, session: %s, tx: %s, duration: %v",
-			address, amountWei, sessionResp.Session, result.ClaimHash, result.Duration)
-	} else {
-		logMsg = fmt.Sprintf("Queued faucet claim for address %s with amount %.0f wei, session: %s, status: %s, duration: %v",
+	// Log appropriate message based on confirmation status
+	if result.Confirmed {
+		// Transaction confirmed - log with or without hash
+		if result.ClaimHash != "" {
+			logger.Infof("Successfully confirmed faucet claim for address %s with amount %.0f wei, session: %s, tx: %s, duration: %v",
+				address, amountWei, sessionResp.Session, result.ClaimHash, result.Duration)
+		} else {
+			logger.Infof("Successfully confirmed faucet claim for address %s with amount %.0f wei, session: %s, duration: %v (tx hash not available)",
+				address, amountWei, sessionResp.Session, result.Duration)
+		}
+	} else if result.Success {
+		// Only logged when WaitForConfirmation = false
+		logger.Infof("Queued faucet claim for address %s with amount %.0f wei, session: %s, status: %s, duration: %v (not waiting for confirmation)",
 			address, amountWei, sessionResp.Session, result.ClaimStatus, result.Duration)
 	}
-
-	logger.Infof(logMsg)
 
 	return result, nil
 }
