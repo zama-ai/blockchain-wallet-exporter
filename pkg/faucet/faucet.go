@@ -226,7 +226,12 @@ func (c *Client) FundAccountWeiWithOptions(ctx context.Context, address string, 
 
 	// Case 3: Unexpected status
 	default:
-		result.Error = fmt.Errorf("unexpected claim status: %s, claim status: %v", claimResult.Status, claimResult.ClaimStatus)
+		// Safely dereference ClaimStatus pointer for error message
+		claimStatusStr := "<nil>"
+		if claimResult.ClaimStatus != nil {
+			claimStatusStr = *claimResult.ClaimStatus
+		}
+		result.Error = fmt.Errorf("unexpected claim status: %s, claim status: %s", claimResult.Status, claimStatusStr)
 		result.Duration = time.Since(startTime)
 		return result, result.Error
 	}
@@ -295,14 +300,34 @@ func (c *Client) GetSessionStatus(ctx context.Context, session string) (*Session
 func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *FundingOptions) (*SessionStatusResponse, error) {
 	logger.Debugf("Waiting for confirmation of session %s", session)
 
+	// Determine effective timeout: use parent context deadline if available, else use configured timeout
 	timeout := opts.ConfirmationTimeout
 	if timeout <= 0 {
 		timeout = 1 * time.Minute
 	}
 
+	// Check if parent context has a deadline and use the shorter of the two
+	if deadline, ok := ctx.Deadline(); ok {
+		remainingTime := time.Until(deadline)
+		if remainingTime < timeout {
+			timeout = remainingTime
+			logger.Debugf("Adapting confirmation timeout to parent context deadline: %v", timeout)
+		}
+	}
+
+	// Adaptive poll interval: 20% of timeout, min 2s, max 10s
 	pollInterval := opts.PollInterval
 	if pollInterval <= 0 {
-		pollInterval = 10 * time.Second
+		// Calculate adaptive poll interval
+		adaptivePoll := timeout / 5
+		if adaptivePoll < 2*time.Second {
+			adaptivePoll = 2 * time.Second
+		}
+		if adaptivePoll > 10*time.Second {
+			adaptivePoll = 10 * time.Second
+		}
+		pollInterval = adaptivePoll
+		logger.Debugf("Using adaptive poll interval: %v (timeout: %v)", pollInterval, timeout)
 	}
 
 	confirmCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -322,7 +347,12 @@ func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *
 				continue
 			}
 
-			logger.Infof("Session %s status: %s, claim status: %v", session, status.Status, status.ClaimStatus)
+			// Safely dereference ClaimStatus pointer for logging
+			claimStatusStr := "<nil>"
+			if status.ClaimStatus != nil {
+				claimStatusStr = *status.ClaimStatus
+			}
+			logger.Infof("Session %s status: %s, claim status: %s", session, status.Status, claimStatusStr)
 
 			// Check for completion states
 			if status.Status == "finished" {
@@ -331,10 +361,15 @@ func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *
 				}
 				switch *status.ClaimStatus {
 				case "confirmed":
-					logger.Infof("Session %s confirmed with hash %v", session, status.ClaimHash)
+					// Safely dereference ClaimHash pointer for logging
+					claimHashStr := "<nil>"
+					if status.ClaimHash != nil {
+						claimHashStr = *status.ClaimHash
+					}
+					logger.Infof("Session %s confirmed with hash %s", session, claimHashStr)
 					return status, nil
 				case "failed", "error":
-					return nil, fmt.Errorf("session claim failed with status: %s", *status.ClaimStatus)
+					return nil, fmt.Errorf("session claim failed with ClaimStatus: %s and Status: %s", *status.ClaimStatus, status.Status)
 				default:
 					logger.Warnf("Session %s has finished with unexpected claim status: %s, continuing to poll", session, *status.ClaimStatus)
 				}
