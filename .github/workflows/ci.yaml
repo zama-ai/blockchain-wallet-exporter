@@ -53,7 +53,20 @@ jobs:
       - uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed
         with:
           go-version-file: 'go.mod'
-      - run: make test
+      - name: Run tests with coverage
+        run: |
+          go mod tidy
+          go test -v -covermode=atomic -coverprofile=coverage.out ./pkg/collector/... ./pkg/config/... ./pkg/currency/... ./pkg/scheduler/...
+          go tool cover -func coverage.out
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   build-docker:
     runs-on: ubuntu-latest
