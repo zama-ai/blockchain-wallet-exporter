@@ -297,7 +297,7 @@ func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *
 
 	timeout := opts.ConfirmationTimeout
 	if timeout <= 0 {
-		timeout = 5 * time.Minute
+		timeout = 1 * time.Minute
 	}
 
 	pollInterval := opts.PollInterval
@@ -322,7 +322,7 @@ func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *
 				continue
 			}
 
-			logger.Debugf("Session %s status: %s, claim status: %v", session, status.Status, status.ClaimStatus)
+			logger.Infof("Session %s status: %s, claim status: %v", session, status.Status, status.ClaimStatus)
 
 			// Check for completion states
 			if status.Status == "finished" {
@@ -331,7 +331,7 @@ func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *
 				}
 				switch *status.ClaimStatus {
 				case "confirmed":
-					logger.Debugf("Session %s confirmed with hash %v", session, status.ClaimHash)
+					logger.Infof("Session %s confirmed with hash %v", session, status.ClaimHash)
 					return status, nil
 				case "failed", "error":
 					return nil, fmt.Errorf("session claim failed with status: %s", *status.ClaimStatus)
