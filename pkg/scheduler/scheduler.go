@@ -226,7 +226,7 @@ func (rs *RefundScheduler) processAccounts() []*RefundEvent {
 func (rs *RefundScheduler) processAccount(account *config.Account) *RefundEvent {
 	// Use a longer timeout to accommodate faucet confirmation (default 5 minutes)
 	// Add extra buffer for balance check and retries
-	ctx, cancel := context.WithTimeout(rs.ctx, 10*time.Minute)
+	ctx, cancel := context.WithTimeout(rs.ctx, 10*time.Second)
 	defer cancel()
 
 	startTime := time.Now()

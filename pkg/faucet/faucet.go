@@ -261,7 +261,7 @@ func (c *Client) FundAccountWeiWithConfirmation(ctx context.Context, address str
 
 // GetSessionStatus retrieves the current status of a session
 func (c *Client) GetSessionStatus(ctx context.Context, session string) (*SessionStatusResponse, error) {
-	url := fmt.Sprintf("%s/api/getSessionStatus?session=%s", c.baseURL, session)
+	url := fmt.Sprintf("%s/api/getSession?session=%s", c.baseURL, session)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
