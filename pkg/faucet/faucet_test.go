@@ -131,3 +131,71 @@ func TestDefaultFundingOptions(t *testing.T) {
 		t.Errorf("Expected MaxRetries to be 3, got %v", opts.MaxRetries)
 	}
 }
+
+// TestLoggingContextPrefix verifies the logPrefix method behavior
+func TestLoggingContextPrefix(t *testing.T) {
+	tests := []struct {
+		name           string
+		loggingContext *LoggingContext
+		expectedPrefix string
+	}{
+		{
+			name:           "Nil context",
+			loggingContext: nil,
+			expectedPrefix: "[faucet]",
+		},
+		{
+			name:           "Empty node name",
+			loggingContext: &LoggingContext{NodeName: ""},
+			expectedPrefix: "[faucet]",
+		},
+		{
+			name:           "Valid node name",
+			loggingContext: &LoggingContext{NodeName: "sepolia-testnet"},
+			expectedPrefix: "[faucet sepolia-testnet]",
+		},
+		{
+			name:           "Node name with spaces",
+			loggingContext: &LoggingContext{NodeName: "my test node"},
+			expectedPrefix: "[faucet my test node]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prefix := tt.loggingContext.logPrefix()
+			if prefix != tt.expectedPrefix {
+				t.Errorf("Expected prefix %q, got %q", tt.expectedPrefix, prefix)
+			}
+		})
+	}
+}
+
+// TestContextAwareMethodsExist verifies that context-aware methods are available
+func TestContextAwareMethodsExist(t *testing.T) {
+	client := NewClient("http://test-faucet:8080", 30*time.Second)
+	logCtx := &LoggingContext{NodeName: "test-node"}
+
+	// Verify that methods exist and have correct signatures by checking they compile
+	// We can't actually call them without a logger initialized and a real server
+	t.Run("Verify method signatures", func(t *testing.T) {
+		// These assignments verify the methods exist with correct signatures
+		var _ func(context.Context, string, float64, *LoggingContext) (*FaucetResult, error) = client.FundAccountWeiWithContext
+		var _ func(context.Context, string, float64, int, *LoggingContext) (*FaucetResult, error) = client.FundAccountWeiWithRetryAndContext
+		var _ func(context.Context, string, float64, *FundingOptions, *LoggingContext) (*FaucetResult, error) = client.FundAccountWeiWithOptionsAndContext
+		var _ func(context.Context, string, float64, *FundingOptions, *LoggingContext) (*FaucetResult, error) = client.FundAccountWeiWithRetriesAndOptionsAndContext
+
+		// Verify logging context is not nil
+		if logCtx == nil {
+			t.Error("LoggingContext should not be nil")
+		}
+		if logCtx.NodeName != "test-node" {
+			t.Errorf("Expected NodeName to be 'test-node', got %q", logCtx.NodeName)
+		}
+	})
+
+	t.Run("Verify interface compatibility", func(t *testing.T) {
+		// Verify that Client implements the Fauceter interface with new methods
+		var _ Fauceter = client
+	})
+}

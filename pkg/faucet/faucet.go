@@ -19,6 +19,19 @@ type Client struct {
 	timeout    time.Duration
 }
 
+// LoggingContext provides context information for enhanced logging
+type LoggingContext struct {
+	NodeName string
+}
+
+// logPrefix returns a consistent log prefix for faucet operations
+func (lc *LoggingContext) logPrefix() string {
+	if lc == nil || lc.NodeName == "" {
+		return "[faucet]"
+	}
+	return fmt.Sprintf("[faucet %s]", lc.NodeName)
+}
+
 // StartSessionRequest represents the request payload for starting a session
 type StartSessionRequest struct {
 	Address string  `json:"addr"`
@@ -120,8 +133,18 @@ func (c *Client) FundAccountWei(ctx context.Context, address string, amountWei f
 	return c.FundAccountWeiWithOptions(ctx, address, amountWei, DefaultFundingOptions())
 }
 
+// FundAccountWeiWithContext funds an account with an amount specified in wei and logging context
+func (c *Client) FundAccountWeiWithContext(ctx context.Context, address string, amountWei float64, logCtx *LoggingContext) (*FaucetResult, error) {
+	return c.FundAccountWeiWithOptionsAndContext(ctx, address, amountWei, DefaultFundingOptions(), logCtx)
+}
+
 // FundAccountWeiWithOptions funds an account with wei amount and custom options
 func (c *Client) FundAccountWeiWithOptions(ctx context.Context, address string, amountWei float64, opts *FundingOptions) (*FaucetResult, error) {
+	return c.FundAccountWeiWithOptionsAndContext(ctx, address, amountWei, opts, nil)
+}
+
+// FundAccountWeiWithOptionsAndContext funds an account with wei amount, custom options, and logging context
+func (c *Client) FundAccountWeiWithOptionsAndContext(ctx context.Context, address string, amountWei float64, opts *FundingOptions, logCtx *LoggingContext) (*FaucetResult, error) {
 	startTime := time.Now()
 
 	result := &FaucetResult{
@@ -129,7 +152,12 @@ func (c *Client) FundAccountWeiWithOptions(ctx context.Context, address string, 
 		AmountWei: amountWei,
 	}
 
-	logger.Infof("Starting faucet funding for address %s with amount %.0f wei", address, amountWei)
+	prefix := ""
+	if logCtx != nil {
+		prefix = logCtx.logPrefix() + " "
+	}
+
+	logger.Infof("%sStarting faucet funding for address %s with amount %.0f wei", prefix, address, amountWei)
 
 	// Step 1: Start session (send amount in wei)
 	sessionResp, err := c.startSession(ctx, address, amountWei)
@@ -144,7 +172,7 @@ func (c *Client) FundAccountWeiWithOptions(ctx context.Context, address string, 
 	result.Balance = sessionResp.Balance
 	result.Target = sessionResp.Target
 
-	logger.Debugf("Started faucet session %s for address %s, status: %s", sessionResp.Session, address, sessionResp.Status)
+	logger.Debugf("%sStarted faucet session %s for address %s, status: %s", prefix, sessionResp.Session, address, sessionResp.Status)
 
 	// Check if session is claimable
 	if sessionResp.Status != "claimable" {
@@ -162,6 +190,7 @@ func (c *Client) FundAccountWeiWithOptions(ctx context.Context, address string, 
 	}
 
 	result.Status = claimResult.Status
+	result.ClaimStatus = "<nil>"
 	if claimResult.ClaimStatus != nil {
 		result.ClaimStatus = *claimResult.ClaimStatus
 	}
@@ -169,10 +198,10 @@ func (c *Client) FundAccountWeiWithOptions(ctx context.Context, address string, 
 	// Handle different claim states
 	switch {
 	// Case 1: Claim is queued or being processed
-	case claimResult.Status == "claiming" && claimResult.ClaimStatus != nil && *claimResult.ClaimStatus == "queue":
+	case claimResult.Status == "claiming" && claimResult.ClaimStatus != nil && result.ClaimStatus == "queue":
 		if opts.WaitForConfirmation {
 			// Wait for confirmation before marking as success
-			confirmed, err := c.waitForConfirmation(ctx, sessionResp.Session, opts)
+			confirmed, err := c.waitForConfirmation(ctx, sessionResp.Session, opts, logCtx)
 			if err != nil {
 				result.Error = fmt.Errorf("failed to confirm transaction: %w", err)
 				result.Duration = time.Since(startTime)
@@ -199,7 +228,7 @@ func (c *Client) FundAccountWeiWithOptions(ctx context.Context, address string, 
 
 	// Case 2: Claim is already finished (immediate confirmation)
 	case claimResult.Status == "finished" && claimResult.ClaimStatus != nil:
-		switch *claimResult.ClaimStatus {
+		switch result.ClaimStatus {
 		case "confirmed":
 			result.Success = true
 			result.Confirmed = true
@@ -226,12 +255,7 @@ func (c *Client) FundAccountWeiWithOptions(ctx context.Context, address string, 
 
 	// Case 3: Unexpected status
 	default:
-		// Safely dereference ClaimStatus pointer for error message
-		claimStatusStr := "<nil>"
-		if claimResult.ClaimStatus != nil {
-			claimStatusStr = *claimResult.ClaimStatus
-		}
-		result.Error = fmt.Errorf("unexpected claim status: %s, claim status: %s", claimResult.Status, claimStatusStr)
+		result.Error = fmt.Errorf("unexpected claim status: %s, claim status: %s", claimResult.Status, result.ClaimStatus)
 		result.Duration = time.Since(startTime)
 		return result, result.Error
 	}
@@ -242,16 +266,16 @@ func (c *Client) FundAccountWeiWithOptions(ctx context.Context, address string, 
 	if result.Confirmed {
 		// Transaction confirmed - log with or without hash
 		if result.ClaimHash != "" {
-			logger.Infof("Successfully confirmed faucet claim for address %s with amount %.0f wei, session: %s, tx: %s, duration: %v",
-				address, amountWei, sessionResp.Session, result.ClaimHash, result.Duration)
+			logger.Infof("%sSuccessfully confirmed faucet claim for address %s with amount %.0f wei, session: %s, tx: %s, duration: %v",
+				prefix, address, amountWei, sessionResp.Session, result.ClaimHash, result.Duration)
 		} else {
-			logger.Infof("Successfully confirmed faucet claim for address %s with amount %.0f wei, session: %s, duration: %v (tx hash not available)",
-				address, amountWei, sessionResp.Session, result.Duration)
+			logger.Infof("%sSuccessfully confirmed faucet claim for address %s with amount %.0f wei, session: %s, duration: %v (tx hash not available)",
+				prefix, address, amountWei, sessionResp.Session, result.Duration)
 		}
 	} else if result.Success {
 		// Only logged when WaitForConfirmation = false
-		logger.Infof("Queued faucet claim for address %s with amount %.0f wei, session: %s, status: %s, duration: %v (not waiting for confirmation)",
-			address, amountWei, sessionResp.Session, result.ClaimStatus, result.Duration)
+		logger.Infof("%sQueued faucet claim for address %s with amount %.0f wei, session: %s, status: %s, duration: %v (not waiting for confirmation)",
+			prefix, address, amountWei, sessionResp.Session, result.ClaimStatus, result.Duration)
 	}
 
 	return result, nil
@@ -297,8 +321,12 @@ func (c *Client) GetSessionStatus(ctx context.Context, session string) (*Session
 }
 
 // waitForConfirmation polls the session status until it's confirmed or timeout
-func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *FundingOptions) (*SessionStatusResponse, error) {
-	logger.Debugf("Waiting for confirmation of session %s", session)
+func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *FundingOptions, logCtx *LoggingContext) (*SessionStatusResponse, error) {
+	prefix := ""
+	if logCtx != nil {
+		prefix = logCtx.logPrefix() + " "
+	}
+	logger.Debugf("%sWaiting for confirmation of session %s", prefix, session)
 
 	// Determine effective timeout: use parent context deadline if available, else use configured timeout
 	timeout := opts.ConfirmationTimeout
@@ -311,7 +339,7 @@ func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *
 		remainingTime := time.Until(deadline)
 		if remainingTime < timeout {
 			timeout = remainingTime
-			logger.Debugf("Adapting confirmation timeout to parent context deadline: %v", timeout)
+			logger.Debugf("%sAdapting confirmation timeout to parent context deadline: %v", prefix, timeout)
 		}
 	}
 
@@ -327,7 +355,7 @@ func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *
 			adaptivePoll = 10 * time.Second
 		}
 		pollInterval = adaptivePoll
-		logger.Debugf("Using adaptive poll interval: %v (timeout: %v)", pollInterval, timeout)
+		logger.Debugf("%sUsing adaptive poll interval: %v (timeout: %v)", prefix, pollInterval, timeout)
 	}
 
 	confirmCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -343,7 +371,7 @@ func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *
 		case <-ticker.C:
 			status, err := c.GetSessionStatus(confirmCtx, session)
 			if err != nil {
-				logger.Warnf("Failed to get session status for %s: %v", session, err)
+				logger.Warnf("%sFailed to get session status for %s: %v", prefix, session, err)
 				continue
 			}
 
@@ -352,7 +380,7 @@ func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *
 			if status.ClaimStatus != nil {
 				claimStatusStr = *status.ClaimStatus
 			}
-			logger.Infof("Session %s status: %s, claim status: %s", session, status.Status, claimStatusStr)
+			logger.Infof("%sSession %s status: %s, claim status: %s", prefix, session, status.Status, claimStatusStr)
 
 			// Check for completion states
 			if status.Status == "finished" {
@@ -366,12 +394,12 @@ func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *
 					if status.ClaimHash != nil {
 						claimHashStr = *status.ClaimHash
 					}
-					logger.Infof("Session %s confirmed with hash %s", session, claimHashStr)
+					logger.Infof("%sSession %s confirmed with hash %s", prefix, session, claimHashStr)
 					return status, nil
 				case "failed", "error":
 					return nil, fmt.Errorf("session claim failed with ClaimStatus: %s and Status: %s", *status.ClaimStatus, status.Status)
 				default:
-					logger.Warnf("Session %s has finished with unexpected claim status: %s, continuing to poll", session, *status.ClaimStatus)
+					logger.Warnf("%sSession %s has finished with unexpected claim status: %s, continuing to poll", prefix, session, *status.ClaimStatus)
 				}
 			}
 
@@ -478,10 +506,27 @@ func (c *Client) FundAccountWeiWithRetry(ctx context.Context, address string, am
 	return c.FundAccountWeiWithRetriesAndOptions(ctx, address, amountWei, opts)
 }
 
+// FundAccountWeiWithRetryAndContext funds an account with wei amount, retry logic, and logging context
+func (c *Client) FundAccountWeiWithRetryAndContext(ctx context.Context, address string, amountWei float64, maxRetries int, logCtx *LoggingContext) (*FaucetResult, error) {
+	opts := DefaultFundingOptions()
+	opts.MaxRetries = maxRetries
+	return c.FundAccountWeiWithRetriesAndOptionsAndContext(ctx, address, amountWei, opts, logCtx)
+}
+
 // FundAccountWeiWithRetriesAndOptions funds an account with wei amount, retry logic and custom options
 func (c *Client) FundAccountWeiWithRetriesAndOptions(ctx context.Context, address string, amountWei float64, opts *FundingOptions) (*FaucetResult, error) {
+	return c.FundAccountWeiWithRetriesAndOptionsAndContext(ctx, address, amountWei, opts, nil)
+}
+
+// FundAccountWeiWithRetriesAndOptionsAndContext funds an account with wei amount, retry logic, custom options, and logging context
+func (c *Client) FundAccountWeiWithRetriesAndOptionsAndContext(ctx context.Context, address string, amountWei float64, opts *FundingOptions, logCtx *LoggingContext) (*FaucetResult, error) {
 	var lastResult *FaucetResult
 	var lastErr error
+
+	prefix := ""
+	if logCtx != nil {
+		prefix = logCtx.logPrefix() + " "
+	}
 
 	maxRetries := opts.MaxRetries
 	if maxRetries <= 0 {
@@ -494,7 +539,7 @@ func (c *Client) FundAccountWeiWithRetriesAndOptions(ctx context.Context, addres
 		if attempt > 0 {
 			// Exponential backoff
 			backoff := time.Duration(attempt*attempt) * time.Second
-			logger.Warnf("Retrying faucet funding for %s (attempt %d/%d) after %v", address, attempt+1, totalAttempts, backoff)
+			logger.Warnf("%sRetrying faucet funding for %s (attempt %d/%d) after %v", prefix, address, attempt+1, totalAttempts, backoff)
 
 			select {
 			case <-ctx.Done():
@@ -503,14 +548,14 @@ func (c *Client) FundAccountWeiWithRetriesAndOptions(ctx context.Context, addres
 			}
 		}
 
-		result, err := c.FundAccountWeiWithOptions(ctx, address, amountWei, opts)
+		result, err := c.FundAccountWeiWithOptionsAndContext(ctx, address, amountWei, opts, logCtx)
 		if err == nil {
 			return result, nil
 		}
 
 		lastResult = result
 		lastErr = err
-		logger.Warnf("Faucet funding attempt %d failed for %s: %v", attempt+1, address, err)
+		logger.Warnf("%sFaucet funding attempt %d failed for %s: %v", prefix, attempt+1, address, err)
 	}
 
 	return lastResult, fmt.Errorf("failed after %d attempts: %w", totalAttempts, lastErr)
