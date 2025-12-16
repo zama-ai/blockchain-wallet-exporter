@@ -27,11 +27,10 @@ type RefundScheduler struct {
 	collector        collector.IModuleCollector
 	cron             *cron.Cron
 
-	running  bool
-	mutex    sync.RWMutex
-	stopChan chan struct{}
-	ctx      context.Context
-	cancel   context.CancelFunc
+	running bool
+	mutex   sync.RWMutex
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 // RefundEvent represents a refund event for monitoring and logging
@@ -88,7 +87,6 @@ func NewNodeRefundScheduler(node *config.Node, currencyRegistry *currency.Regist
 		currencyRegistry: currencyRegistry,
 		collector:        nodeCollector,
 		cron:             cron.New(cron.WithSeconds()),
-		stopChan:         make(chan struct{}),
 		ctx:              ctx,
 		cancel:           cancel,
 	}
@@ -137,9 +135,8 @@ func (rs *RefundScheduler) Stop() error {
 	ctx := rs.cron.Stop()
 	<-ctx.Done()
 
-	// Cancel context and close stop channel
+	// Cancel context
 	rs.cancel()
-	close(rs.stopChan)
 
 	// Close collector
 	if err := rs.collector.Close(); err != nil {
@@ -227,7 +224,9 @@ func (rs *RefundScheduler) processAccounts() []*RefundEvent {
 
 // processAccount processes a single account for refunding
 func (rs *RefundScheduler) processAccount(account *config.Account) *RefundEvent {
-	ctx, cancel := context.WithTimeout(rs.ctx, 30*time.Second)
+	// Use a longer timeout to accommodate faucet confirmation (default 5 minutes)
+	// Add extra buffer for balance check and retries
+	ctx, cancel := context.WithTimeout(rs.ctx, 10*time.Minute)
 	defer cancel()
 
 	startTime := time.Now()
@@ -363,11 +362,15 @@ func (rs *RefundScheduler) processAccount(account *config.Account) *RefundEvent 
 	event.Duration = time.Since(startTime)
 
 	if faucetResult.Success {
-		logMsg := fmt.Sprintf("%s Successfully refunded account %s with %.6f %s (%.0f %s), session: %s, status: %s, claim status: %s",
-			rs.logPrefix(), account.Name, refundAmountDisplay, collectorUnit, event.AmountBaseUnit, baseUnitName, event.Session, event.Status, event.ClaimStatus)
-
+		var logMsg string
 		if event.Confirmed && event.ClaimHash != "" {
-			logMsg += fmt.Sprintf(", confirmed with tx: %s at block %d", event.ClaimHash, event.ClaimBlock)
+			// Transaction has been confirmed on-chain
+			logMsg = fmt.Sprintf("%s Successfully refunded account %s with %.6f %s (%.0f %s), session: %s, confirmed with tx: %s at block %d",
+				rs.logPrefix(), account.Name, refundAmountDisplay, collectorUnit, event.AmountBaseUnit, baseUnitName, event.Session, event.ClaimHash, event.ClaimBlock)
+		} else {
+			// Transaction is queued but not yet confirmed
+			logMsg = fmt.Sprintf("%s Queued refund for account %s with %.6f %s (%.0f %s), session: %s, status: %s, claim status: %s",
+				rs.logPrefix(), account.Name, refundAmountDisplay, collectorUnit, event.AmountBaseUnit, baseUnitName, event.Session, event.Status, event.ClaimStatus)
 		}
 
 		logger.Infof(logMsg)

@@ -97,7 +97,7 @@ type FundingOptions struct {
 // DefaultFundingOptions returns sensible defaults for funding operations
 func DefaultFundingOptions() *FundingOptions {
 	return &FundingOptions{
-		WaitForConfirmation: false,
+		WaitForConfirmation: true, // Wait for on-chain confirmation by default for safety
 		ConfirmationTimeout: 5 * time.Minute,
 		PollInterval:        10 * time.Second,
 		MaxRetries:          3,
@@ -166,12 +166,14 @@ func (c *Client) FundAccountWeiWithOptions(ctx context.Context, address string, 
 		result.ClaimStatus = *claimResult.ClaimStatus
 	}
 
-	// Check if claim is in progress
-	if claimResult.Status == "claiming" && claimResult.ClaimStatus != nil && *claimResult.ClaimStatus == "queue" {
-		result.Success = true // Consider queued as success since it's processing
+	// Handle different claim states
+	switch {
+	// Case 1: Claim is queued or being processed
+	case claimResult.Status == "claiming" && claimResult.ClaimStatus != nil && *claimResult.ClaimStatus == "queue":
+		result.Success = true // Queued for processing (not yet confirmed)
 
 		if opts.WaitForConfirmation {
-			// Step 3: Wait for confirmation
+			// Wait for confirmation
 			confirmed, err := c.waitForConfirmation(ctx, sessionResp.Session, opts)
 			if err != nil {
 				logger.Warnf("Failed to wait for confirmation for session %s: %v", sessionResp.Session, err)
@@ -191,21 +193,53 @@ func (c *Client) FundAccountWeiWithOptions(ctx context.Context, address string, 
 			}
 		}
 
-		result.Duration = time.Since(startTime)
-
-		logMsg := fmt.Sprintf("Successfully queued faucet claim for address %s with amount %.0f wei, session: %s, status: %s, duration: %v",
-			address, amountWei, sessionResp.Session, result.ClaimStatus, result.Duration)
-
-		if result.Confirmed && result.ClaimHash != "" {
-			logMsg += fmt.Sprintf(", confirmed with tx: %s", result.ClaimHash)
+	// Case 2: Claim is already finished (immediate confirmation)
+	case claimResult.Status == "finished" && claimResult.ClaimStatus != nil:
+		switch *claimResult.ClaimStatus {
+		case "confirmed":
+			result.Success = true
+			result.Confirmed = true
+			if claimResult.ClaimIdx != nil {
+				// Try to get full status with transaction details
+				if status, err := c.GetSessionStatus(ctx, sessionResp.Session); err == nil {
+					if status.ClaimHash != nil {
+						result.ClaimHash = *status.ClaimHash
+					}
+					if status.ClaimBlock != nil {
+						result.ClaimBlock = *status.ClaimBlock
+					}
+				}
+			}
+		case "failed", "error":
+			result.Error = fmt.Errorf("claim failed with status: %s", *claimResult.ClaimStatus)
+			result.Duration = time.Since(startTime)
+			return result, result.Error
+		default:
+			result.Error = fmt.Errorf("unexpected finished claim status: %s", *claimResult.ClaimStatus)
+			result.Duration = time.Since(startTime)
+			return result, result.Error
 		}
 
-		logger.Infof(logMsg)
-	} else {
+	// Case 3: Unexpected status
+	default:
 		result.Error = fmt.Errorf("unexpected claim status: %s, claim status: %v", claimResult.Status, claimResult.ClaimStatus)
 		result.Duration = time.Since(startTime)
 		return result, result.Error
 	}
+
+	result.Duration = time.Since(startTime)
+
+	// Log appropriate message
+	var logMsg string
+	if result.Confirmed && result.ClaimHash != "" {
+		logMsg = fmt.Sprintf("Successfully confirmed faucet claim for address %s with amount %.0f wei, session: %s, tx: %s, duration: %v",
+			address, amountWei, sessionResp.Session, result.ClaimHash, result.Duration)
+	} else {
+		logMsg = fmt.Sprintf("Queued faucet claim for address %s with amount %.0f wei, session: %s, status: %s, duration: %v",
+			address, amountWei, sessionResp.Session, result.ClaimStatus, result.Duration)
+	}
+
+	logger.Infof(logMsg)
 
 	return result, nil
 }
@@ -283,17 +317,22 @@ func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *
 			logger.Debugf("Session %s status: %s, claim status: %v", session, status.Status, status.ClaimStatus)
 
 			// Check for completion states
-			if status.Status == "finished" && status.ClaimStatus != nil {
+			if status.Status == "finished" {
+				if status.ClaimStatus == nil {
+					return nil, fmt.Errorf("session finished but claim status is nil")
+				}
 				switch *status.ClaimStatus {
 				case "confirmed":
 					logger.Debugf("Session %s confirmed with hash %v", session, status.ClaimHash)
 					return status, nil
 				case "failed", "error":
 					return nil, fmt.Errorf("session claim failed with status: %s", *status.ClaimStatus)
+				default:
+					logger.Warnf("Session %s has finished with unexpected claim status: %s, continuing to poll", session, *status.ClaimStatus)
 				}
 			}
 
-			// Continue polling for other states
+			// Continue polling for in-progress states (claiming/queue, claiming/processing, etc.)
 		}
 	}
 }
@@ -406,11 +445,13 @@ func (c *Client) FundAccountWeiWithRetriesAndOptions(ctx context.Context, addres
 		maxRetries = 3
 	}
 
-	for attempt := 0; attempt <= maxRetries; attempt++ {
+	// Total attempts = 1 initial + maxRetries retries
+	totalAttempts := maxRetries + 1
+	for attempt := 0; attempt < totalAttempts; attempt++ {
 		if attempt > 0 {
 			// Exponential backoff
 			backoff := time.Duration(attempt*attempt) * time.Second
-			logger.Warnf("Retrying faucet funding for %s (attempt %d/%d) after %v", address, attempt+1, maxRetries+1, backoff)
+			logger.Warnf("Retrying faucet funding for %s (attempt %d/%d) after %v", address, attempt+1, totalAttempts, backoff)
 
 			select {
 			case <-ctx.Done():
@@ -429,5 +470,5 @@ func (c *Client) FundAccountWeiWithRetriesAndOptions(ctx context.Context, addres
 		logger.Warnf("Faucet funding attempt %d failed for %s: %v", attempt+1, address, err)
 	}
 
-	return lastResult, fmt.Errorf("failed after %d attempts: %w", maxRetries+1, lastErr)
+	return lastResult, fmt.Errorf("failed after %d attempts: %w", totalAttempts, lastErr)
 }
