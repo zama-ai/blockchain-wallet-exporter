@@ -28,6 +28,10 @@ env:
   golang-version: '1.23'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
