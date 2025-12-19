@@ -24,6 +24,9 @@ on:
           - 'true'
           - 'false'
 
+permissions:
+  contents: read
+
 env:
   golang-version: '1.23'
   REGISTRY: ghcr.io
