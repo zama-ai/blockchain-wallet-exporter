@@ -14,7 +14,7 @@ nodes:
   # Gateway node with explicit autoRefund configuration
   - name: l2-gateway
     module: evm
-    httpAddr: "https://l2-gateway-node-zws-dev-http.diplodocus-boa.ts.net"
+    httpAddr: "https://arbitrum-one-rpc.publicnode.com"
     
     # Explicit auto-refund configuration for this node
     autoRefund:
@@ -27,13 +27,13 @@ nodes:
     metricsUnit: eth   # Human-readable unit for metrics and comparisons
     httpSSLVerify: false
     accounts:
-      - address: "0xfcD843C3Bf1Dd5Aa3Bd78cdD3e0E28A34ef2fDaE"
+      - address: "0x5Fadfae7fDCa560e377FF26F26760891251De983"
         name: test-1-l2
         # Auto-refund thresholds for this account
         refundThreshold: 0.8  # Trigger refund when balance below refundThreshold to reach refundTarget 
         refundTarget: 1.2     
 
-      - address: "0xb3e3EE7CE48eEb7342CEa47B0d2296F5c3D67624"
+      - address: "0xa0d2763f12D09efacfdEf6d5656d5Be7bB3E9600"
         name: test-2-l2
         # Different thresholds for backup account
         refundThreshold: 1.3  # Lower threshold for backup
@@ -46,7 +46,7 @@ nodes:
   # Gateway node with explicit autoRefund configuration
   - name: conduit-gateway-erc20
     module: erc20
-    httpAddr: "https://rpc.testnet.zama.org"
+    httpAddr: "https://arbitrum-one-rpc.publicnode.com"
     # Automatically discover ERC20 token metadata (symbol, decimals) during startup
     # If RPC endpoint is unreachable, the exporter will fail to start
     autoUnitDiscovery: true
@@ -58,9 +58,9 @@ nodes:
       timeout: 30
     
     httpSSLVerify: false
-    contractAddress: "0xcE762c7FDaac795D31a266B9247F8958c159c6d4"
+    contractAddress: "0xB38031951903f798f7114d726c17aB04574e82e8"
     accounts:
-      - address: "0x5E81001c9005a254B92ce21210C34dc14bc85F03"
+      - address: "0xe6DE4F4E3A17be1D0c9d69a0574e78678CDd5e29"
         name: relayer
 
     labels:
@@ -86,13 +86,13 @@ nodes:
     metricsUnit: eth   # Human-readable unit for metrics and comparisons
     httpSSLVerify: false
     accounts:
-      - address: "0xfcD843C3Bf1Dd5Aa3Bd78cdD3e0E28A34ef2fDaE"
+      - address: "0xe6DE4F4E3A17be1D0c9d69a0574e78678CDd5e29"
         name: test-1-l1
         # Auto-refund thresholds for this account
         refundThreshold: 1.3  # Trigger refund when balance below refundThreshold to reach refundTarget
         refundTarget: 1.6     
 
-      - address: "0xb3e3EE7CE48eEb7342CEa47B0d2296F5c3D67624"
+      - address: "0xfEB8B994c932B00796c52C0df0cbF09eAA010890"
         name: test-2-l1
         # Different thresholds for backup account
         refundThreshold: 1.7  # Lower threshold for backup
