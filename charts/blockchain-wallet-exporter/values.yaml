@@ -146,24 +146,24 @@ config:
     environment: development
     metricsAddr: ":9091"
     logLevel: info
-  nodes:
+  nodes: []
     # Example node configuration
-    - name: example-node
-      module: evm
-      httpAddr: "https://example-node.example.com"
-      autoRefund:
-        enabled: false
-        schedule: "@every 5m"
-        faucetUrl: ""
-        timeout: 30
-      unit: wei
-      metricsUnit: eth
-      httpSSLVerify: true
-      accounts:
-        - address: "0x0000000000000000000000000000000000000000"
-          name: example-account
-          refundThreshold: 1.0
-          refundTarget: 2.0
-      labels:
-        app: example
-        env: development
+    # - name: example-node
+    #   module: evm
+    #   httpAddr: "https://example-node.example.com"
+    #   autoRefund:
+    #     enabled: false
+    #     schedule: "@every 5m"
+    #     faucetUrl: ""
+    #     timeout: 30
+    #   unit: wei
+    #   metricsUnit: eth
+    #   httpSSLVerify: true
+    #   accounts:
+    #     - address: "0x0000000000000000000000000000000000000000"
+    #       name: example-account
+    #       refundThreshold: 1.0
+    #       refundTarget: 2.0
+    #   labels:
+    #     app: example
+    #     env: development
