@@ -217,6 +217,64 @@ nodes:
 - Per the ERC20 specification, `symbol()` and `decimals()` are required, but `name()` is optional (falls back to symbol if unavailable)
 - **Auto-Refund Requirement**: The auto-refund feature exclusively works with [POWFaucet](https://github.com/pk910/PoWFaucet). The exporter uses POWFaucet's API endpoints (`/api/startSession`, `/api/claimReward`, `/api/getSessionStatus`) for funding operations. Other faucet implementations are not supported.
 
+## Metrics and Monitoring
+
+The exporter provides comprehensive Prometheus metrics for monitoring wallet balances and health:
+
+### Exported Metrics
+
+- **`blockchain_wallet_balance`**: Current balance of wallet accounts (Gauge)
+- **`blockchain_wallet_health`**: Health status of wallet accounts (Gauge, 1=healthy, 0=unhealthy)
+- **`blockchain_wallet_scrapes_failed_total`**: Total number of failed scrape cycles (Counter)
+
+All metrics include rich labels for filtering and aggregation:
+- `address`, `account_name`: Account identifiers
+- `node_name`, `module`, `unit`: Configuration identifiers
+- `exporter_version`: Exporter version
+- Custom labels from configuration
+
+### Quick Start
+
+Access metrics at: `http://localhost:9091/metrics`
+
+Example Prometheus scrape configuration:
+
+```yaml
+scrape_configs:
+  - job_name: 'blockchain-wallet-exporter'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['localhost:9091']
+```
+
+### Monitoring Examples
+
+**Check account balance:**
+```promql
+blockchain_wallet_balance{account_name="test-1-l2"}
+```
+
+**Alert on low balance:**
+```promql
+blockchain_wallet_balance < 0.5
+```
+
+**Monitor account health:**
+```promql
+blockchain_wallet_health == 0
+```
+
+### Complete Documentation
+
+For comprehensive metrics documentation including:
+- Detailed metric descriptions and label reference
+- PromQL query patterns and examples
+- Recording and alerting rules
+- Grafana dashboard examples
+- Troubleshooting guide
+
+See **[Metrics Documentation](docs/Metrics.md)**.
+
 ## Installation
 
 ### Kubernetes with Helm (Recommended)
@@ -279,6 +337,12 @@ To run the linter, execute:
 ```bash
 make test-lint
 ```
+
+## Documentation
+
+- **[Metrics Documentation](docs/Metrics.md)**: Complete guide to Prometheus metrics, queries, alerting, and monitoring
+- **[Configuration Specification](docs/Spec.md)**: Detailed configuration options and examples
+- **[Helm Chart README](charts/blockchain-wallet-exporter/README.md)**: Kubernetes deployment guide
 
 ## License
 
