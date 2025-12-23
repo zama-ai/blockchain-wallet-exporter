@@ -8,7 +8,7 @@ A Helm chart for deploying the Blockchain Wallet Exporter on Kubernetes. This ex
 # Install from GitHub Container Registry (GHCR)
 helm install my-blockchain-exporter \
   oci://ghcr.io/zama-ai/charts/blockchain-wallet-exporter \
-  --version 0.1.0
+  --version 0.1.2
 
 # Or use the latest version
 helm install my-blockchain-exporter \
@@ -32,18 +32,18 @@ This chart bootstraps a Blockchain Wallet Exporter deployment on a Kubernetes cl
 ```bash
 # Install with default values
 helm install my-blockchain-exporter \
-  oci://ghcr.io/zama-ai/charts/blockchain-wallet-exporter \
-  --version 0.1.0
+  oci://ghcr.io/zama-ai/blockchain-wallet-exporter/charts/blockchain-wallet-exporter \
+  --version 0.1.2
 
 # Install with custom values
 helm install my-blockchain-exporter \
-  oci://ghcr.io/zama-ai/charts/blockchain-wallet-exporter \
-  --version 0.1.0 \
+  oci://ghcr.io/zama-ai/blockchain-wallet-exporter/charts/blockchain-wallet-exporter \
+  --version 0.1.2 \
   --values custom-values.yaml
 
 # Install in a specific namespace
 helm install my-blockchain-exporter \
-  oci://ghcr.io/zama-ai/charts/blockchain-wallet-exporter \
+  oci://ghcr.io/zama-ai/blockchain-wallet-exporter/charts/blockchain-wallet-exporter \
   --version 0.1.0 \
   --namespace monitoring \
   --create-namespace
@@ -107,11 +107,15 @@ config:
     - name: ethereum-mainnet
       module: evm
       httpAddr: "https://mainnet.infura.io/v3/YOUR-PROJECT-ID"
+      # or use environment variable
+      # httpAddrEnv: URL_WITH_API_KEY
       httpSSLVerify: true
       unit: wei
       metricsUnit: eth
       accounts:
         - address: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb5"
+          # or use environment variable
+          # addressEnv: WALLET_ADDRESS
           name: wallet-1
           refundThreshold: 0.1
           refundTarget: 1.0
@@ -139,7 +143,7 @@ config:
 
 ```bash
 helm install my-blockchain-exporter \
-  oci://ghcr.io/zama-ai/charts/blockchain-wallet-exporter \
+  oci://ghcr.io/zama-ai/blockchain-wallet-exporter/charts/blockchain-wallet-exporter \
   --version 0.1.0 \
   --set config.global.logLevel=debug \
   --set serviceMonitor.enabled=true \
@@ -163,23 +167,9 @@ Or using command line:
 
 ```bash
 helm install my-blockchain-exporter \
-  oci://ghcr.io/zama-ai/charts/blockchain-wallet-exporter \
+  oci://ghcr.io/zama-ai/blockchain-wallet-exporter/charts/blockchain-wallet-exporter \
   --set serviceMonitor.enabled=true \
   --set serviceMonitor.interval=30s
-```
-
-## Upgrading
-
-```bash
-# Upgrade to a new version
-helm upgrade my-blockchain-exporter \
-  oci://ghcr.io/zama-ai/charts/blockchain-wallet-exporter \
-  --version 0.2.0
-
-# Upgrade with new values
-helm upgrade my-blockchain-exporter \
-  oci://ghcr.io/zama-ai/charts/blockchain-wallet-exporter \
-  --values new-values.yaml
 ```
 
 ## Version Management
