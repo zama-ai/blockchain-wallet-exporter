@@ -22,6 +22,7 @@ type Client struct {
 // LoggingContext provides context information for enhanced logging
 type LoggingContext struct {
 	NodeName string
+	BaseUnit string // The base unit being used (e.g., "wei", "utoken", etc.)
 }
 
 // logPrefix returns a consistent log prefix for faucet operations
@@ -35,7 +36,7 @@ func (lc *LoggingContext) logPrefix() string {
 // StartSessionRequest represents the request payload for starting a session
 type StartSessionRequest struct {
 	Address string  `json:"addr"`
-	Amount  float64 `json:"amount"` // Amount in wei
+	Amount  float64 `json:"amount"` // Amount in base unit (wei for ETH, smallest unit for ERC20, etc.)
 }
 
 // StartSessionResponse represents the response from starting a session
@@ -84,19 +85,20 @@ type SessionStatusResponse struct {
 
 // FaucetResult represents the result of a faucet operation
 type FaucetResult struct {
-	Address     string
-	AmountWei   float64 // Amount in wei (only unit supported)
-	Session     string
-	Status      string
-	ClaimStatus string
-	ClaimBlock  int64
-	ClaimHash   string
-	Balance     string
-	Target      string
-	Success     bool
-	Confirmed   bool
-	Error       error
-	Duration    time.Duration
+	Address        string
+	AmountBaseUnit float64 // Amount in base unit (wei for ETH, smallest unit for ERC20, etc.)
+	BaseUnit       string  // The base unit used (e.g., "wei", "utoken", etc.)
+	Session        string
+	Status         string
+	ClaimStatus    string
+	ClaimBlock     int64
+	ClaimHash      string
+	Balance        string
+	Target         string
+	Success        bool
+	Confirmed      bool
+	Error          error
+	Duration       time.Duration
 }
 
 // FundingOptions represents options for funding operations
@@ -128,28 +130,34 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 	}
 }
 
-// FundAccountWei funds an account with an amount specified in wei
-func (c *Client) FundAccountWei(ctx context.Context, address string, amountWei float64) (*FaucetResult, error) {
-	return c.FundAccountWeiWithOptions(ctx, address, amountWei, DefaultFundingOptions())
+// FundAccount funds an account with an amount specified in base unit
+func (c *Client) FundAccount(ctx context.Context, address string, amountBaseUnit float64) (*FaucetResult, error) {
+	return c.FundAccountWithOptions(ctx, address, amountBaseUnit, DefaultFundingOptions())
 }
 
-// FundAccountWeiWithContext funds an account with an amount specified in wei and logging context
-func (c *Client) FundAccountWeiWithContext(ctx context.Context, address string, amountWei float64, logCtx *LoggingContext) (*FaucetResult, error) {
-	return c.FundAccountWeiWithOptionsAndContext(ctx, address, amountWei, DefaultFundingOptions(), logCtx)
+// FundAccountWithContext funds an account with an amount specified in base unit and logging context
+func (c *Client) FundAccountWithContext(ctx context.Context, address string, amountBaseUnit float64, logCtx *LoggingContext) (*FaucetResult, error) {
+	return c.FundAccountWithOptionsAndContext(ctx, address, amountBaseUnit, DefaultFundingOptions(), logCtx)
 }
 
-// FundAccountWeiWithOptions funds an account with wei amount and custom options
-func (c *Client) FundAccountWeiWithOptions(ctx context.Context, address string, amountWei float64, opts *FundingOptions) (*FaucetResult, error) {
-	return c.FundAccountWeiWithOptionsAndContext(ctx, address, amountWei, opts, nil)
+// FundAccountWithOptions funds an account with base unit amount and custom options
+func (c *Client) FundAccountWithOptions(ctx context.Context, address string, amountBaseUnit float64, opts *FundingOptions) (*FaucetResult, error) {
+	return c.FundAccountWithOptionsAndContext(ctx, address, amountBaseUnit, opts, nil)
 }
 
-// FundAccountWeiWithOptionsAndContext funds an account with wei amount, custom options, and logging context
-func (c *Client) FundAccountWeiWithOptionsAndContext(ctx context.Context, address string, amountWei float64, opts *FundingOptions, logCtx *LoggingContext) (*FaucetResult, error) {
+// FundAccountWithOptionsAndContext funds an account with base unit amount, custom options, and logging context
+func (c *Client) FundAccountWithOptionsAndContext(ctx context.Context, address string, amountBaseUnit float64, opts *FundingOptions, logCtx *LoggingContext) (*FaucetResult, error) {
 	startTime := time.Now()
 
 	result := &FaucetResult{
-		Address:   address,
-		AmountWei: amountWei,
+		Address:        address,
+		AmountBaseUnit: amountBaseUnit,
+		BaseUnit:       "",
+	}
+
+	// Set base unit from logging context if available
+	if logCtx != nil && logCtx.BaseUnit != "" {
+		result.BaseUnit = logCtx.BaseUnit
 	}
 
 	prefix := ""
@@ -157,10 +165,16 @@ func (c *Client) FundAccountWeiWithOptionsAndContext(ctx context.Context, addres
 		prefix = logCtx.logPrefix() + " "
 	}
 
-	logger.Infof("%sStarting faucet funding for address %s with amount %.0f wei", prefix, address, amountWei)
+	// Determine unit string for logging
+	unitStr := "base units"
+	if logCtx != nil && logCtx.BaseUnit != "" {
+		unitStr = logCtx.BaseUnit
+	}
 
-	// Step 1: Start session (send amount in wei)
-	sessionResp, err := c.startSession(ctx, address, amountWei)
+	logger.Infof("%sStarting faucet funding for address %s with amount %.0f %s", prefix, address, amountBaseUnit, unitStr)
+
+	// Step 1: Start session (send amount in base unit)
+	sessionResp, err := c.startSession(ctx, address, amountBaseUnit)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to start session: %w", err)
 		result.Duration = time.Since(startTime)
@@ -266,26 +280,26 @@ func (c *Client) FundAccountWeiWithOptionsAndContext(ctx context.Context, addres
 	if result.Confirmed {
 		// Transaction confirmed - log with or without hash
 		if result.ClaimHash != "" {
-			logger.Infof("%sSuccessfully confirmed faucet claim for address %s with amount %.0f wei, session: %s, tx: %s, duration: %v",
-				prefix, address, amountWei, sessionResp.Session, result.ClaimHash, result.Duration)
+			logger.Infof("%sSuccessfully confirmed faucet claim for address %s with amount %.0f %s, session: %s, tx: %s, duration: %v",
+				prefix, address, amountBaseUnit, unitStr, sessionResp.Session, result.ClaimHash, result.Duration)
 		} else {
-			logger.Infof("%sSuccessfully confirmed faucet claim for address %s with amount %.0f wei, session: %s, duration: %v (tx hash not available)",
-				prefix, address, amountWei, sessionResp.Session, result.Duration)
+			logger.Infof("%sSuccessfully confirmed faucet claim for address %s with amount %.0f %s, session: %s, duration: %v (tx hash not available)",
+				prefix, address, amountBaseUnit, unitStr, sessionResp.Session, result.Duration)
 		}
 	} else if result.Success {
 		// Only logged when WaitForConfirmation = false
-		logger.Infof("%sQueued faucet claim for address %s with amount %.0f wei, session: %s, status: %s, duration: %v (not waiting for confirmation)",
-			prefix, address, amountWei, sessionResp.Session, result.ClaimStatus, result.Duration)
+		logger.Infof("%sQueued faucet claim for address %s with amount %.0f %s, session: %s, status: %s, duration: %v (not waiting for confirmation)",
+			prefix, address, amountBaseUnit, unitStr, sessionResp.Session, result.ClaimStatus, result.Duration)
 	}
 
 	return result, nil
 }
 
-// FundAccountWeiWithConfirmation funds an account with wei amount and waits for confirmation
-func (c *Client) FundAccountWeiWithConfirmation(ctx context.Context, address string, amountWei float64) (*FaucetResult, error) {
+// FundAccountWithConfirmation funds an account with base unit amount and waits for confirmation
+func (c *Client) FundAccountWithConfirmation(ctx context.Context, address string, amountBaseUnit float64) (*FaucetResult, error) {
 	opts := DefaultFundingOptions()
 	opts.WaitForConfirmation = true
-	return c.FundAccountWeiWithOptions(ctx, address, amountWei, opts)
+	return c.FundAccountWithOptions(ctx, address, amountBaseUnit, opts)
 }
 
 // GetSessionStatus retrieves the current status of a session
@@ -409,12 +423,12 @@ func (c *Client) waitForConfirmation(ctx context.Context, session string, opts *
 }
 
 // startSession starts a faucet session
-func (c *Client) startSession(ctx context.Context, address string, amountWei float64) (*StartSessionResponse, error) {
+func (c *Client) startSession(ctx context.Context, address string, amountBaseUnit float64) (*StartSessionResponse, error) {
 	url := fmt.Sprintf("%s/api/startSession", c.baseURL)
 
 	reqBody := StartSessionRequest{
 		Address: address,
-		Amount:  amountWei, // Amount in wei
+		Amount:  amountBaseUnit, // Amount in base unit (wei for ETH, smallest unit for ERC20, etc.)
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -499,27 +513,27 @@ func (c *Client) claimReward(ctx context.Context, session string) (*ClaimRewardR
 	return &claimResp, nil
 }
 
-// FundAccountWeiWithRetry funds an account with wei amount and retry logic
-func (c *Client) FundAccountWeiWithRetry(ctx context.Context, address string, amountWei float64, maxRetries int) (*FaucetResult, error) {
+// FundAccountWithRetry funds an account with base unit amount and retry logic
+func (c *Client) FundAccountWithRetry(ctx context.Context, address string, amountBaseUnit float64, maxRetries int) (*FaucetResult, error) {
 	opts := DefaultFundingOptions()
 	opts.MaxRetries = maxRetries
-	return c.FundAccountWeiWithRetriesAndOptions(ctx, address, amountWei, opts)
+	return c.FundAccountWithRetriesAndOptions(ctx, address, amountBaseUnit, opts)
 }
 
-// FundAccountWeiWithRetryAndContext funds an account with wei amount, retry logic, and logging context
-func (c *Client) FundAccountWeiWithRetryAndContext(ctx context.Context, address string, amountWei float64, maxRetries int, logCtx *LoggingContext) (*FaucetResult, error) {
+// FundAccountWithRetryAndContext funds an account with base unit amount, retry logic, and logging context
+func (c *Client) FundAccountWithRetryAndContext(ctx context.Context, address string, amountBaseUnit float64, maxRetries int, logCtx *LoggingContext) (*FaucetResult, error) {
 	opts := DefaultFundingOptions()
 	opts.MaxRetries = maxRetries
-	return c.FundAccountWeiWithRetriesAndOptionsAndContext(ctx, address, amountWei, opts, logCtx)
+	return c.FundAccountWithRetriesAndOptionsAndContext(ctx, address, amountBaseUnit, opts, logCtx)
 }
 
-// FundAccountWeiWithRetriesAndOptions funds an account with wei amount, retry logic and custom options
-func (c *Client) FundAccountWeiWithRetriesAndOptions(ctx context.Context, address string, amountWei float64, opts *FundingOptions) (*FaucetResult, error) {
-	return c.FundAccountWeiWithRetriesAndOptionsAndContext(ctx, address, amountWei, opts, nil)
+// FundAccountWithRetriesAndOptions funds an account with base unit amount, retry logic and custom options
+func (c *Client) FundAccountWithRetriesAndOptions(ctx context.Context, address string, amountBaseUnit float64, opts *FundingOptions) (*FaucetResult, error) {
+	return c.FundAccountWithRetriesAndOptionsAndContext(ctx, address, amountBaseUnit, opts, nil)
 }
 
-// FundAccountWeiWithRetriesAndOptionsAndContext funds an account with wei amount, retry logic, custom options, and logging context
-func (c *Client) FundAccountWeiWithRetriesAndOptionsAndContext(ctx context.Context, address string, amountWei float64, opts *FundingOptions, logCtx *LoggingContext) (*FaucetResult, error) {
+// FundAccountWithRetriesAndOptionsAndContext funds an account with base unit amount, retry logic, custom options, and logging context
+func (c *Client) FundAccountWithRetriesAndOptionsAndContext(ctx context.Context, address string, amountBaseUnit float64, opts *FundingOptions, logCtx *LoggingContext) (*FaucetResult, error) {
 	var lastResult *FaucetResult
 	var lastErr error
 
@@ -548,7 +562,7 @@ func (c *Client) FundAccountWeiWithRetriesAndOptionsAndContext(ctx context.Conte
 			}
 		}
 
-		result, err := c.FundAccountWeiWithOptionsAndContext(ctx, address, amountWei, opts, logCtx)
+		result, err := c.FundAccountWithOptionsAndContext(ctx, address, amountBaseUnit, opts, logCtx)
 		if err == nil {
 			return result, nil
 		}

@@ -60,34 +60,34 @@ func (m *mockModuleCollector) Name() string {
 
 // mockFauceter is a mock implementation of Fauceter for testing.
 type mockFauceter struct {
-	fundWithRetryFunc func(ctx context.Context, address string, amountWei float64, maxRetries int) (*faucet.FaucetResult, error)
+	fundWithRetryFunc func(ctx context.Context, address string, amountBaseUnit float64, maxRetries int) (*faucet.FaucetResult, error)
 }
 
-func (m *mockFauceter) FundAccountWeiWithRetry(ctx context.Context, address string, amountWei float64, maxRetries int) (*faucet.FaucetResult, error) {
+func (m *mockFauceter) FundAccountWithRetry(ctx context.Context, address string, amountBaseUnit float64, maxRetries int) (*faucet.FaucetResult, error) {
 	if m.fundWithRetryFunc != nil {
-		return m.fundWithRetryFunc(ctx, address, amountWei, maxRetries)
+		return m.fundWithRetryFunc(ctx, address, amountBaseUnit, maxRetries)
 	}
-	return nil, fmt.Errorf("mock FundAccountWeiWithRetry not implemented")
+	return nil, fmt.Errorf("mock FundAccountWithRetry not implemented")
 }
 
-func (m *mockFauceter) FundAccountWeiWithRetryAndContext(ctx context.Context, address string, amountWei float64, maxRetries int, logCtx *faucet.LoggingContext) (*faucet.FaucetResult, error) {
+func (m *mockFauceter) FundAccountWithRetryAndContext(ctx context.Context, address string, amountBaseUnit float64, maxRetries int, logCtx *faucet.LoggingContext) (*faucet.FaucetResult, error) {
 	// Delegate to the same function, ignoring the logging context in tests
 	if m.fundWithRetryFunc != nil {
-		return m.fundWithRetryFunc(ctx, address, amountWei, maxRetries)
+		return m.fundWithRetryFunc(ctx, address, amountBaseUnit, maxRetries)
 	}
-	return nil, fmt.Errorf("mock FundAccountWeiWithRetryAndContext not implemented")
+	return nil, fmt.Errorf("mock FundAccountWithRetryAndContext not implemented")
 }
 
-func (m *mockFauceter) FundAccountWeiWithRetriesAndOptionsAndContext(ctx context.Context, address string, amountWei float64, opts *faucet.FundingOptions, logCtx *faucet.LoggingContext) (*faucet.FaucetResult, error) {
+func (m *mockFauceter) FundAccountWithRetriesAndOptionsAndContext(ctx context.Context, address string, amountBaseUnit float64, opts *faucet.FundingOptions, logCtx *faucet.LoggingContext) (*faucet.FaucetResult, error) {
 	// Delegate to the same function, extracting maxRetries from opts
 	maxRetries := 3
 	if opts != nil && opts.MaxRetries > 0 {
 		maxRetries = opts.MaxRetries
 	}
 	if m.fundWithRetryFunc != nil {
-		return m.fundWithRetryFunc(ctx, address, amountWei, maxRetries)
+		return m.fundWithRetryFunc(ctx, address, amountBaseUnit, maxRetries)
 	}
-	return nil, fmt.Errorf("mock FundAccountWeiWithRetriesAndOptionsAndContext not implemented")
+	return nil, fmt.Errorf("mock FundAccountWithRetriesAndOptionsAndContext not implemented")
 }
 
 // Helper function to create a valid node configuration for testing
@@ -140,7 +140,7 @@ func TestProcessAccount_NoRefundNeeded(t *testing.T) {
 		balance: 10.0, // 10 ETH, above threshold
 	}
 	mockFaucet := &mockFauceter{
-		fundWithRetryFunc: func(ctx context.Context, address string, amountWei float64, maxRetries int) (*faucet.FaucetResult, error) {
+		fundWithRetryFunc: func(ctx context.Context, address string, amountBaseUnit float64, maxRetries int) (*faucet.FaucetResult, error) {
 			t.Error("Faucet should not be called when balance is sufficient")
 			return nil, nil
 		},
@@ -181,10 +181,10 @@ func TestProcessAccount_RefundSuccessful(t *testing.T) {
 		balance: 2.0, // 2 ETH, below threshold
 	}
 	mockFaucet := &mockFauceter{
-		fundWithRetryFunc: func(ctx context.Context, address string, amountWei float64, maxRetries int) (*faucet.FaucetResult, error) {
+		fundWithRetryFunc: func(ctx context.Context, address string, amountBaseUnit float64, maxRetries int) (*faucet.FaucetResult, error) {
 			faucetCalled = true
-			if amountWei != expectedAmountBase {
-				return nil, fmt.Errorf("expected amount %f, got %f", expectedAmountBase, amountWei)
+			if amountBaseUnit != expectedAmountBase {
+				return nil, fmt.Errorf("expected amount %f, got %f", expectedAmountBase, amountBaseUnit)
 			}
 			return &faucet.FaucetResult{
 				Success: true,
@@ -315,7 +315,7 @@ func TestProcessAccount_FaucetError(t *testing.T) {
 		balance: 2.0, // Below threshold
 	}
 	mockFaucet := &mockFauceter{
-		fundWithRetryFunc: func(ctx context.Context, address string, amountWei float64, maxRetries int) (*faucet.FaucetResult, error) {
+		fundWithRetryFunc: func(ctx context.Context, address string, amountBaseUnit float64, maxRetries int) (*faucet.FaucetResult, error) {
 			return nil, fmt.Errorf("faucet service unavailable")
 		},
 	}
@@ -800,7 +800,7 @@ func TestSchedulerProcessAccounts(t *testing.T) {
 		balance: 2.0, // Below threshold
 	}
 	mockFaucet := &mockFauceter{
-		fundWithRetryFunc: func(ctx context.Context, address string, amountWei float64, maxRetries int) (*faucet.FaucetResult, error) {
+		fundWithRetryFunc: func(ctx context.Context, address string, amountBaseUnit float64, maxRetries int) (*faucet.FaucetResult, error) {
 			return &faucet.FaucetResult{
 				Success: true,
 			}, nil
@@ -883,7 +883,7 @@ func TestSchedulerProcessAccounts_ConcurrencyLimit(t *testing.T) {
 	}
 
 	mockFaucet := &mockFauceter{
-		fundWithRetryFunc: func(ctx context.Context, address string, amountWei float64, maxRetries int) (*faucet.FaucetResult, error) {
+		fundWithRetryFunc: func(ctx context.Context, address string, amountBaseUnit float64, maxRetries int) (*faucet.FaucetResult, error) {
 			return &faucet.FaucetResult{
 				Success: true,
 			}, nil
@@ -1330,7 +1330,7 @@ func TestMaxRetriesFixed(t *testing.T) {
 	}
 
 	mockFaucet := &mockFauceter{
-		fundWithRetryFunc: func(ctx context.Context, address string, amountWei float64, maxRetries int) (*faucet.FaucetResult, error) {
+		fundWithRetryFunc: func(ctx context.Context, address string, amountBaseUnit float64, maxRetries int) (*faucet.FaucetResult, error) {
 			capturedMaxRetries = maxRetries
 			return &faucet.FaucetResult{
 				Success:   true,
