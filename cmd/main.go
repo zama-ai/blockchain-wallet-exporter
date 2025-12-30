@@ -124,8 +124,7 @@ func main() {
 
 	// Bootstrap Server with both registries
 	server := httpfiber.NewServer(config,
-		httpfiber.WithRegistry(promRegistry),
-		httpfiber.WithCurrencyRegistry(currencyRegistry))
+		httpfiber.WithRegistry(promRegistry))
 
 	signalChain := make(chan os.Signal, 1)
 	signal.Notify(signalChain, os.Interrupt)
