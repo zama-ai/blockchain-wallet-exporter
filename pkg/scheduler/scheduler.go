@@ -183,6 +183,14 @@ func (rs *RefundScheduler) executeRefundCheck() {
 	}
 
 	duration := time.Since(startTime)
+
+	// If base unit is not configured, we can't meaningfully report the total refunded amount
+	if baseUnit == "" {
+		logger.Errorf("%s Auto-refund check completed in %v with configuration errors: %d successful, %d errors (base unit not configured - cannot report total refunded)",
+			rs.logPrefix(), duration, successCount, errorCount)
+		return
+	}
+
 	logger.Infof("%s Auto-refund check completed in %v: %d successful, %d errors, %.0f %s total refunded",
 		rs.logPrefix(), duration, successCount, errorCount, totalRefunded, baseUnit)
 }
@@ -265,16 +273,30 @@ func (rs *RefundScheduler) processAccount(ctx context.Context, account *config.A
 	event.CurrentBalance = result.Value
 
 	// Determine the unit that the collector returned (should be metricsUnit after conversion)
-	collectorUnit := "eth" // Default fallback
+	collectorUnit := ""
 	if rs.node.MetricsUnit != nil && rs.node.MetricsUnit.Name != "" {
 		collectorUnit = rs.node.MetricsUnit.Name
 	} else if rs.node.Unit != nil && rs.node.Unit.Name != "" {
 		collectorUnit = rs.node.Unit.Name
 	}
 
+	// Validate that we have a collector unit
+	if collectorUnit == "" {
+		event.Error = fmt.Errorf("unable to determine collector unit - metricsUnit and unit are not configured")
+		event.Duration = time.Since(startTime)
+		logger.Errorf("%s Unable to determine collector unit for account %s", rs.logPrefix(), account.Name)
+		return event
+	}
+
 	logger.Debugf("%s Collector unit determined as: %s", rs.logPrefix(), collectorUnit)
 
 	baseUnitName := rs.baseUnitName()
+	if baseUnitName == "" {
+		event.Error = fmt.Errorf("unable to determine base unit - node unit configuration is missing")
+		event.Duration = time.Since(startTime)
+		logger.Errorf("%s Unable to determine base unit for account %s", rs.logPrefix(), account.Name)
+		return event
+	}
 	logger.Debugf("%s Base unit determined as: %s", rs.logPrefix(), baseUnitName)
 
 	// Convert threshold and target from config unit to the base unit for faucet
@@ -359,8 +381,11 @@ func (rs *RefundScheduler) processAccount(ctx context.Context, account *config.A
 		MaxRetries:          MAX_FAUCET_RETRIES,
 	}
 
-	logCtx := &faucet.LoggingContext{NodeName: rs.node.Name}
-	faucetResult, err := rs.faucetClient.FundAccountWeiWithRetriesAndOptionsAndContext(ctx, account.Address, refundAmountBase, opts, logCtx)
+	logCtx := &faucet.LoggingContext{
+		NodeName: rs.node.Name,
+		BaseUnit: baseUnitName,
+	}
+	faucetResult, err := rs.faucetClient.FundAccountWithRetriesAndOptionsAndContext(ctx, account.Address, refundAmountBase, opts, logCtx)
 	if err != nil {
 		event.Error = fmt.Errorf("failed to fund account: %w", err)
 		event.Duration = time.Since(startTime)
@@ -512,12 +537,16 @@ func (rs *RefundScheduler) baseUnitName() string {
 	if rs.node != nil && rs.node.Unit != nil && rs.node.Unit.Name != "" {
 		return rs.node.Unit.Name
 	}
-	return "wei"
+	// No fallback - configuration error should be caught during validation
+	return ""
 }
 
 // convertToBaseUnit converts amount from sourceUnit to the node's base unit
 func (rs *RefundScheduler) convertToBaseUnit(amount float64, sourceUnit string) (float64, error) {
 	baseUnit := rs.baseUnitName()
+	if baseUnit == "" {
+		return 0, fmt.Errorf("base unit not configured for node %s", rs.node.Name)
+	}
 	if sourceUnit == baseUnit {
 		return amount, nil
 	}
@@ -527,6 +556,9 @@ func (rs *RefundScheduler) convertToBaseUnit(amount float64, sourceUnit string) 
 // convertFromBaseUnit converts amount from the node's base unit to the targetUnit
 func (rs *RefundScheduler) convertFromBaseUnit(amount float64, targetUnit string) (float64, error) {
 	baseUnit := rs.baseUnitName()
+	if baseUnit == "" {
+		return 0, fmt.Errorf("base unit not configured for node %s", rs.node.Name)
+	}
 	if targetUnit == baseUnit {
 		return amount, nil
 	}
