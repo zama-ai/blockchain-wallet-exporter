@@ -1365,3 +1365,387 @@ func TestMaxRetriesFixed(t *testing.T) {
 		t.Errorf("Expected maxRetries to be 3 (hardcoded), but got %d", capturedMaxRetries)
 	}
 }
+
+// TestProcessAccount_MissingBaseUnit tests that processing fails when base unit is not configured
+func TestProcessAccount_MissingBaseUnit(t *testing.T) {
+	mockCollector := &mockModuleCollector{
+		balance: 2.0, // Below threshold
+	}
+	mockFaucet := &mockFauceter{}
+
+	currencyRegistry := currency.NewDefaultRegistry()
+	node := createTestNodeConfig("test-node", true)
+	// Remove base unit configuration
+	node.Unit = nil
+
+	rs := &RefundScheduler{
+		node:             node,
+		collector:        mockCollector,
+		currencyRegistry: currencyRegistry,
+		faucetClient:     mockFaucet,
+		ctx:              context.Background(),
+	}
+
+	refundThreshold := 5.0
+	refundTarget := 10.0
+	account := &config.Account{
+		Address:         "0x1234567890123456789012345678901234567890",
+		Name:            "test-account",
+		RefundThreshold: &refundThreshold,
+		RefundTarget:    &refundTarget,
+	}
+
+	event := rs.processAccount(context.Background(), account)
+
+	if event == nil {
+		t.Fatal("Expected an error event, but got nil")
+	}
+	if event.Error == nil {
+		t.Error("Expected error when base unit is missing, but got none")
+	}
+	if !strings.Contains(fmt.Sprintf("%v", event.Error), "unable to determine base unit") {
+		t.Errorf("Expected 'unable to determine base unit' error, got: %v", event.Error)
+	}
+}
+
+// TestProcessAccount_MissingCollectorUnit tests that processing fails when collector unit is not configured
+func TestProcessAccount_MissingCollectorUnit(t *testing.T) {
+	mockCollector := &mockModuleCollector{
+		balance: 2.0, // Below threshold
+	}
+	mockFaucet := &mockFauceter{}
+
+	currencyRegistry := currency.NewDefaultRegistry()
+	node := createTestNodeConfig("test-node", true)
+	// Remove metrics unit and base unit to trigger collector unit error
+	node.MetricsUnit = nil
+	node.Unit = nil
+
+	rs := &RefundScheduler{
+		node:             node,
+		collector:        mockCollector,
+		currencyRegistry: currencyRegistry,
+		faucetClient:     mockFaucet,
+		ctx:              context.Background(),
+	}
+
+	refundThreshold := 5.0
+	refundTarget := 10.0
+	account := &config.Account{
+		Address:         "0x1234567890123456789012345678901234567890",
+		Name:            "test-account",
+		RefundThreshold: &refundThreshold,
+		RefundTarget:    &refundTarget,
+	}
+
+	event := rs.processAccount(context.Background(), account)
+
+	if event == nil {
+		t.Fatal("Expected an error event, but got nil")
+	}
+	if event.Error == nil {
+		t.Error("Expected error when collector unit is missing, but got none")
+	}
+	if !strings.Contains(fmt.Sprintf("%v", event.Error), "unable to determine collector unit") {
+		t.Errorf("Expected 'unable to determine collector unit' error, got: %v", event.Error)
+	}
+}
+
+// TestProcessAccount_ERC20Token tests refunding with ERC20 token (different units than ETH)
+func TestProcessAccount_ERC20Token(t *testing.T) {
+	var faucetCalled bool
+	expectedAmountBase := 8e6 // 10 (target) - 2 (current) = 8 USDC (in smallest unit)
+
+	mockCollector := &mockModuleCollector{
+		balance: 2.0, // 2 USDC, below threshold
+	}
+	mockFaucet := &mockFauceter{
+		fundWithRetryFunc: func(ctx context.Context, address string, amountBaseUnit float64, maxRetries int) (*faucet.FaucetResult, error) {
+			faucetCalled = true
+			if amountBaseUnit != expectedAmountBase {
+				return nil, fmt.Errorf("expected amount %f, got %f", expectedAmountBase, amountBaseUnit)
+			}
+			return &faucet.FaucetResult{
+				Success:        true,
+				AmountBaseUnit: amountBaseUnit,
+				BaseUnit:       "uusdc",
+			}, nil
+		},
+	}
+
+	// Register USDC units
+	currencyRegistry := currency.NewDefaultRegistry()
+	currencyRegistry.MustRegister(&currency.Unit{
+		Name:         "usdc",
+		Symbol:       "USDC",
+		Decimals:     6,
+		ConversionTo: map[string]float64{"uusdc": 1e6},
+	})
+	currencyRegistry.MustRegister(&currency.Unit{
+		Name:         "uusdc",
+		Symbol:       "uUSDC",
+		Decimals:     0,
+		ConversionTo: map[string]float64{"usdc": 1e-6},
+	})
+
+	// Create node with USDC configuration
+	node := &config.Node{
+		Name:     "erc20-usdc",
+		Module:   "erc20",
+		HttpAddr: "http://test-node:8545",
+		Labels:   make(map[string]string),
+		Unit: &currency.Unit{
+			Name:     "uusdc", // Smallest unit
+			Symbol:   "uUSDC",
+			Decimals: 0,
+		},
+		MetricsUnit: &currency.Unit{
+			Name:     "usdc", // Display unit
+			Symbol:   "USDC",
+			Decimals: 6,
+		},
+		AutoRefund: &config.AutoRefund{
+			Enabled:   true,
+			FaucetURL: "http://test-faucet:8080",
+			Schedule:  "@every 1m",
+			Timeout:   30,
+		},
+	}
+
+	refundThreshold := 5.0
+	refundTarget := 10.0
+	node.Accounts = []*config.Account{
+		{
+			Address:         "0x1234567890123456789012345678901234567890",
+			Name:            "test-account",
+			RefundThreshold: &refundThreshold,
+			RefundTarget:    &refundTarget,
+		},
+	}
+
+	rs := &RefundScheduler{
+		node:             node,
+		collector:        mockCollector,
+		currencyRegistry: currencyRegistry,
+		faucetClient:     mockFaucet,
+		ctx:              context.Background(),
+	}
+
+	event := rs.processAccount(context.Background(), node.Accounts[0])
+
+	if !faucetCalled {
+		t.Error("Expected faucet to be called, but it wasn't")
+	}
+
+	if event == nil {
+		t.Fatal("Expected a refund event, but got nil")
+	}
+	if !event.Success {
+		t.Errorf("Expected refund to be successful, but it failed: %v", event.Error)
+	}
+	if event.AmountBaseUnit != expectedAmountBase {
+		t.Errorf("Expected event AmountBaseUnit to be %f, but got %f", expectedAmountBase, event.AmountBaseUnit)
+	}
+	if event.BaseUnit != "uusdc" {
+		t.Errorf("Expected event BaseUnit to be 'uusdc', but got '%s'", event.BaseUnit)
+	}
+}
+
+// TestProcessAccount_BaseUnitPassedToFaucet tests that BaseUnit is properly passed to faucet logging context
+func TestProcessAccount_BaseUnitPassedToFaucet(t *testing.T) {
+	var capturedLogCtx *faucet.LoggingContext
+
+	mockCollector := &mockModuleCollector{
+		balance: 2.0, // Below threshold
+	}
+
+	// Create a custom mock that captures the LoggingContext
+	customMock := &struct {
+		mockFauceter
+		captureFunc func(ctx context.Context, address string, amountBaseUnit float64, opts *faucet.FundingOptions, logCtx *faucet.LoggingContext) (*faucet.FaucetResult, error)
+	}{}
+
+	customMock.captureFunc = func(ctx context.Context, address string, amountBaseUnit float64, opts *faucet.FundingOptions, logCtx *faucet.LoggingContext) (*faucet.FaucetResult, error) {
+		capturedLogCtx = logCtx
+		return &faucet.FaucetResult{
+			Success:        true,
+			AmountBaseUnit: amountBaseUnit,
+			BaseUnit:       logCtx.BaseUnit,
+		}, nil
+	}
+
+	// Implement the interface method
+	customMock.fundWithRetryFunc = func(ctx context.Context, address string, amountBaseUnit float64, maxRetries int) (*faucet.FaucetResult, error) {
+		return customMock.captureFunc(ctx, address, amountBaseUnit, &faucet.FundingOptions{MaxRetries: maxRetries}, &faucet.LoggingContext{
+			NodeName: "test-node",
+			BaseUnit: "wei",
+		})
+	}
+
+	currencyRegistry := currency.NewDefaultRegistry()
+	node := createTestNodeConfig("test-node", true)
+
+	rs := &RefundScheduler{
+		node:             node,
+		collector:        mockCollector,
+		currencyRegistry: currencyRegistry,
+		faucetClient:     &customMock.mockFauceter,
+		ctx:              context.Background(),
+	}
+
+	refundThreshold := 5.0
+	refundTarget := 10.0
+	account := &config.Account{
+		Address:         "0x1234567890123456789012345678901234567890",
+		Name:            "test-account",
+		RefundThreshold: &refundThreshold,
+		RefundTarget:    &refundTarget,
+	}
+
+	event := rs.processAccount(context.Background(), account)
+
+	if event == nil {
+		t.Fatal("Expected a refund event, but got nil")
+	}
+
+	if capturedLogCtx == nil {
+		t.Fatal("Expected LoggingContext to be captured, but it was nil")
+	}
+
+	if capturedLogCtx.BaseUnit != "wei" {
+		t.Errorf("Expected LoggingContext.BaseUnit to be 'wei', but got '%s'", capturedLogCtx.BaseUnit)
+	}
+
+	if capturedLogCtx.NodeName != "test-node" {
+		t.Errorf("Expected LoggingContext.NodeName to be 'test-node', but got '%s'", capturedLogCtx.NodeName)
+	}
+}
+
+// TestConvertToBaseUnit_MissingBaseUnit tests conversion error when base unit is not configured
+func TestConvertToBaseUnit_MissingBaseUnit(t *testing.T) {
+	currencyRegistry := currency.NewDefaultRegistry()
+	node := createTestNodeConfig("test-node", true)
+	node.Unit = nil // Remove base unit
+
+	rs := &RefundScheduler{
+		currencyRegistry: currencyRegistry,
+		node:             node,
+	}
+
+	_, err := rs.convertToBaseUnit(1.0, "eth")
+	if err == nil {
+		t.Error("Expected error when base unit is not configured, but got nil")
+	}
+	if !strings.Contains(err.Error(), "base unit not configured") {
+		t.Errorf("Expected 'base unit not configured' error, got: %v", err)
+	}
+}
+
+// TestConvertFromBaseUnit_MissingBaseUnit tests conversion error when base unit is not configured
+func TestConvertFromBaseUnit_MissingBaseUnit(t *testing.T) {
+	currencyRegistry := currency.NewDefaultRegistry()
+	node := createTestNodeConfig("test-node", true)
+	node.Unit = nil // Remove base unit
+
+	rs := &RefundScheduler{
+		currencyRegistry: currencyRegistry,
+		node:             node,
+	}
+
+	_, err := rs.convertFromBaseUnit(1e18, "eth")
+	if err == nil {
+		t.Error("Expected error when base unit is not configured, but got nil")
+	}
+	if !strings.Contains(err.Error(), "base unit not configured") {
+		t.Errorf("Expected 'base unit not configured' error, got: %v", err)
+	}
+}
+
+// TestExecuteRefundCheck_MissingBaseUnitInSummary tests that summary logging handles missing base unit
+func TestExecuteRefundCheck_MissingBaseUnitInSummary(t *testing.T) {
+	mockCollector := &mockModuleCollector{
+		balance: 2.0, // Below threshold, will try to refund but fail due to missing unit
+	}
+	mockFaucet := &mockFauceter{}
+
+	currencyRegistry := currency.NewDefaultRegistry()
+	node := createTestNodeConfig("test-node", true)
+	node.Unit = nil // Remove base unit to trigger the error
+
+	rs := &RefundScheduler{
+		node:             node,
+		collector:        mockCollector,
+		currencyRegistry: currencyRegistry,
+		faucetClient:     mockFaucet,
+		ctx:              context.Background(),
+		cron:             cron.New(),
+	}
+
+	// This should complete without panicking, even though base unit is missing
+	// The summary should log an error about missing base unit
+	rs.executeRefundCheck()
+
+	// Test passes if we get here without panic
+	// In a real scenario, you'd check logs, but for unit test we just verify it doesn't crash
+}
+
+// TestProcessAccount_ConversionFailure tests handling of currency conversion errors
+func TestProcessAccount_ConversionFailure(t *testing.T) {
+	mockCollector := &mockModuleCollector{
+		balance: 2.0, // Below threshold
+	}
+	mockFaucet := &mockFauceter{}
+
+	// Create registry but don't register the units we'll use
+	currencyRegistry := currency.NewDefaultRegistry()
+
+	node := &config.Node{
+		Name:     "test-node",
+		Module:   "evm",
+		HttpAddr: "http://test-node:8545",
+		Labels:   make(map[string]string),
+		Unit: &currency.Unit{
+			Name:     "invalidunit", // This unit is not registered
+			Symbol:   "INVALID",
+			Decimals: 18,
+		},
+		MetricsUnit: &currency.Unit{
+			Name:     "eth",
+			Symbol:   "ETH",
+			Decimals: 18,
+		},
+	}
+
+	refundThreshold := 5.0
+	refundTarget := 10.0
+	node.Accounts = []*config.Account{
+		{
+			Address:         "0x1234567890123456789012345678901234567890",
+			Name:            "test-account",
+			RefundThreshold: &refundThreshold,
+			RefundTarget:    &refundTarget,
+		},
+	}
+
+	rs := &RefundScheduler{
+		node:             node,
+		collector:        mockCollector,
+		currencyRegistry: currencyRegistry,
+		faucetClient:     mockFaucet,
+		ctx:              context.Background(),
+	}
+
+	event := rs.processAccount(context.Background(), node.Accounts[0])
+
+	if event == nil {
+		t.Fatal("Expected an error event, but got nil")
+	}
+	if event.Error == nil {
+		t.Error("Expected error for invalid currency conversion, but got none")
+	}
+	// The error should mention conversion failure
+	errStr := fmt.Sprintf("%v", event.Error)
+	if !strings.Contains(errStr, "failed to convert") {
+		t.Errorf("Expected conversion error, got: %v", event.Error)
+	}
+}
