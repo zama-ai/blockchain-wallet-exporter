@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/zama-ai/blockchain-wallet-exporter/pkg/collector"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/erc20"
@@ -74,33 +75,34 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	for _, node := range config.Nodes {
-		if !node.IsERC20Module() {
-			continue
-		}
-
-		meta, err := erc20.ResolveUnits(ctx, currencyRegistry, node)
-		if err != nil {
-			logger.Fatalf("Failed to prepare ERC20 units for node %s: %v", node.Name, err)
-		}
-		logger.Infof("Loaded ERC20 metadata for node %s (symbol=%s, decimals=%d)", node.Name, meta.Symbol, meta.Decimals)
-	}
-
-	// Initialize prometheus registry
+	// Initialize collectors and register them with prometheus registry
 	promRegistry := prometheus.NewRegistry()
+	autoRefundEnabled := false
+	collectors := make([]prometheus.Collector, 0)
+	for _, node := range config.Nodes {
+		if node.IsERC20Module() {
+			meta, err := erc20.ResolveUnits(ctx, currencyRegistry, node)
+			if err != nil {
+				logger.Fatalf("Failed to prepare ERC20 units for node %s: %v", node.Name, err)
+			}
+			logger.Infof("Loaded ERC20 metadata for node %s (symbol=%s, decimals=%d)", node.Name, meta.Symbol, meta.Decimals)
+		}
+		if node.IsAutoRefundEnabled() {
+			autoRefundEnabled = true
+		}
+		collector, err := collector.NewCollector(*node, currencyRegistry)
+		if err != nil {
+			logger.Fatalf("Failed to create collector for node %s: %v", node.Name, err)
+		}
+		err = promRegistry.Register(collector)
+		if err != nil {
+			logger.Fatalf("Failed to register collector for node %s: %v", node.Name, err)
+		}
+		collectors = append(collectors, collector)
+	}
 
 	// Initialize auto-refund scheduler manager
 	var schedulerManager *scheduler.SchedulerManager
-
-	// Check if any node has auto-refund enabled
-	autoRefundEnabled := false
-	for _, node := range config.Nodes {
-		if node.IsAutoRefundEnabled() {
-			autoRefundEnabled = true
-			break
-		}
-	}
-
 	if autoRefundEnabled {
 		logger.Infof("Auto-refund is enabled on one or more nodes, initializing scheduler manager...")
 		schedulerManager, err = scheduler.NewSchedulerManager(config, currencyRegistry)
@@ -137,7 +139,16 @@ func main() {
 	// Graceful shutdown
 	logger.Infof("Shutting down...")
 
-	// Stop scheduler manager first
+	// Close collectors
+	for _, col := range collectors {
+		if closer, ok := col.(interface{ Close() error }); ok {
+			if err := closer.Close(); err != nil {
+				logger.Errorf("failed to close collector: %v", err)
+			}
+		}
+	}
+
+	// Stop scheduler manager
 	if schedulerManager != nil {
 		logger.Infof("Stopping auto-refund scheduler manager...")
 		if err := schedulerManager.Stop(); err != nil {

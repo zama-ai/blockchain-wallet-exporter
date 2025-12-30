@@ -95,6 +95,7 @@ func (ec *ERC20Collector) CollectAccountBalance(ctx context.Context, account *co
 func (ec *ERC20Collector) Close() error {
 	if ec.client != nil {
 		ec.client.Close()
+		logger.Debugf("closed erc20 client for node %s", ec.nodeName)
 	}
 	return nil
 }

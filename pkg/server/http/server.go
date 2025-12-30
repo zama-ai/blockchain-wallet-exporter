@@ -2,7 +2,6 @@ package httpfiber
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"time"
@@ -12,7 +11,6 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/adaptor"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/zama-ai/blockchain-wallet-exporter/pkg/collector"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
@@ -28,8 +26,7 @@ type Server struct {
 	// Max concurrent requests for the collector
 	MaxConccurentRequests int
 
-	registry   *prometheus.Registry
-	collectors []collector.IModuleCollector // Track collectors for cleanup
+	registry *prometheus.Registry
 }
 
 type Option func(*Server)
@@ -63,25 +60,6 @@ func WithCurrencyRegistry(registry *currency.Registry) Option {
 	}
 }
 
-func (s *Server) InitCollectors() error {
-	var (
-		prometheusCollector prometheus.Collector
-		err                 error
-	)
-
-	for _, node := range s.cfg.Nodes {
-		prometheusCollector, err = collector.NewCollector(*node, s.currencyRegistry)
-		if err != nil {
-			return err
-		}
-		err = s.registry.Register(prometheusCollector)
-		if err != nil {
-			return fmt.Errorf("failed to register collector: %v", err)
-		}
-	}
-	return nil
-}
-
 func (s *Server) Run() error {
 	if s.cfg.Global.Environment == "production" {
 		// parse log level
@@ -96,11 +74,6 @@ func (s *Server) Run() error {
 		s.app.Use(fiberzap.New(fiberzap.Config{
 			Logger: zapLogger.Logger,
 		}))
-	}
-
-	// init collector (validation already done in main.go before server creation)
-	if err := s.InitCollectors(); err != nil {
-		return err
 	}
 
 	// init routes
@@ -126,15 +99,6 @@ func (s *Server) Run() error {
 }
 
 func (s *Server) Stop() {
-	// Close collectors first to release RPC connections
-	logger.Infof("Closing %d collectors...", len(s.collectors))
-	for i, c := range s.collectors {
-		if err := c.Close(); err != nil {
-			logger.Errorf("failed to close collector %d: %v", i, err)
-		}
-	}
-	logger.Infof("All collectors closed")
-
 	logger.Infof("Stopping HTTP server...")
 	if err := s.app.ShutdownWithTimeout(1 * time.Second); err != nil {
 		logger.Debugf("HTTP server shutdown: %v", err)

@@ -128,6 +128,7 @@ func (ec *EVMCollector) CollectAccountBalance(ctx context.Context, account *conf
 func (ec *EVMCollector) Close() error {
 	if ec.client != nil {
 		ec.client.Close()
+		logger.Debugf("closed evm client for node %s", ec.nodeName)
 	}
 	return nil
 }
