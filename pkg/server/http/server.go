@@ -12,16 +12,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/config"
-	"github.com/zama-ai/blockchain-wallet-exporter/pkg/currency"
 	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
 
 	"go.uber.org/zap"
 )
 
 type Server struct {
-	app              *fiber.App
-	cfg              *config.Schema
-	currencyRegistry *currency.Registry
+	app *fiber.App
+	cfg *config.Schema
 
 	// Max concurrent requests for the collector
 	MaxConccurentRequests int
@@ -51,12 +49,6 @@ func NewServer(cfg *config.Schema, opts ...Option) *Server {
 func WithRegistry(registry *prometheus.Registry) Option {
 	return func(s *Server) {
 		s.registry = registry
-	}
-}
-
-func WithCurrencyRegistry(registry *currency.Registry) Option {
-	return func(s *Server) {
-		s.currencyRegistry = registry
 	}
 }
 
