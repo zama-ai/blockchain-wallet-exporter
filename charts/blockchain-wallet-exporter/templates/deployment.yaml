@@ -42,6 +42,10 @@ spec:
           command:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- with .Values.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           args:
             - --config={{ .Values.app.configPath | default "/etc/config/config.yaml" }}
           ports:
