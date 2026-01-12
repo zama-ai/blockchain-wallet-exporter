@@ -19,6 +19,10 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+
+# Environment variables for the container
+env: []
+
 # Application-specific configuration
 app:
   # Path to config file in the container
