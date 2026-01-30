@@ -120,8 +120,15 @@ func (v *EthereumValidator) validateUnit(node *config.Node) ValidationErrors {
 
 func (v *EthereumValidator) validateAccounts(node *config.Node) ValidationErrors {
 	var errors ValidationErrors
-
+	seenNames := make(map[string]struct{})
 	for _, account := range node.Accounts {
+		if account.Name == "" {
+			errors = append(errors, ValidationError{
+				Field:   fmt.Sprintf("account %s", account.Name),
+				Message: "account name cannot be empty",
+			})
+			continue
+		}
 		if account.Address == "" {
 			errors = append(errors, ValidationError{
 				Field:   fmt.Sprintf("account %s", account.Name),
@@ -129,6 +136,15 @@ func (v *EthereumValidator) validateAccounts(node *config.Node) ValidationErrors
 			})
 			continue
 		}
+
+		// Check for duplicate names
+		if _, exists := seenNames[account.Name]; exists {
+			errors = append(errors, ValidationError{
+				Field:   fmt.Sprintf("accounts[%s].name", account.Name),
+				Message: "duplicate account name",
+			})
+		}
+		seenNames[account.Name] = struct{}{}
 
 		if !common.IsHexAddress(account.Address) {
 			errors = append(errors, ValidationError{
@@ -145,6 +161,9 @@ func (v *EthereumValidator) validateAccounts(node *config.Node) ValidationErrors
 				Message: fmt.Sprintf("address should be in checksum format: %s", checksumAddr),
 			})
 		}
+	}
+	if errs := v.ValidateRefundThreshold(node); len(errs) > 0 {
+		errors = append(errors, errs...)
 	}
 
 	return errors
