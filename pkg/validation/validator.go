@@ -118,6 +118,25 @@ type UnitValidationConfig struct {
 	UnitType   string // e.g., "cosmos", "evm"
 }
 
+// validate that refund threshold is less than refund target
+func (v *BaseValidator) ValidateRefundThreshold(node *config.Node) ValidationErrors {
+	var errors ValidationErrors
+
+	for _, account := range node.Accounts {
+		if account.RefundThreshold == nil || account.RefundTarget == nil {
+			continue
+		}
+		if *account.RefundThreshold >= *account.RefundTarget {
+			errors = append(errors, ValidationError{
+				Field:   fmt.Sprintf("accounts[%s].refundThreshold", account.Name),
+				Message: fmt.Sprintf("refundThreshold %f must be less than refundTarget %f", *account.RefundThreshold, *account.RefundTarget),
+			})
+		}
+	}
+
+	return errors
+}
+
 // validateUnitWithConfig validates source and target units against allowed values
 func (v *BaseValidator) validateUnitWithConfig(node *config.Node, config UnitValidationConfig) ValidationErrors {
 	var errors ValidationErrors

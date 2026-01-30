@@ -40,8 +40,8 @@ nodes:
       - address: "0xa0d2763f12D09efacfdEf6d5656d5Be7bB3E9600"
         name: test-2-l2
         # Different thresholds for backup account
-        refundThreshold: 1.3  # Lower threshold for backup
-        refundTarget: 1.6     # Lower target for backup
+        refundThreshold: 1.7  # Lower threshold for backup
+        refundTarget: 2.6     # Lower target for backup
 
     labels:
       app: l2-gateway
@@ -69,6 +69,8 @@ nodes:
     accounts:
       - address: "0xe6DE4F4E3A17be1D0c9d69a0574e78678CDd5e29"
         name: relayer
+        refundThreshold: 1.8  # Lower threshold for backup
+        refundTarget: 2.6     # Lower target for backup
 
     labels:
       app: l3-rollup
