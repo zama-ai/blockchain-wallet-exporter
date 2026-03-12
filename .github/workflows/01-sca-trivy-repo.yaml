@@ -67,7 +67,7 @@ jobs:
         if: success() || failure()
         run: |
             echo "=============== [ Installing Trivy and scan2html plugin ]"
-            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/cd01f230315a364b0eea35edb8db1c4c73c7019a/contrib/install.sh | sudo sh -s -- -b /usr/local/bin v0.58.0
+            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/75c4dc0f45c5d7ffd05ae26df1e0c666787bdf2a/contrib/install.sh | sudo sh -s -- -b /usr/local/bin v0.69.3
             trivy -v
             trivy plugin install github.com/fatihtokus/scan2html
 
