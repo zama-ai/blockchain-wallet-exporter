@@ -570,6 +570,35 @@ func (c *Client) FundAccountWithRetriesAndOptionsAndContext(ctx context.Context,
 		lastResult = result
 		lastErr = err
 		logger.Warnf("%sFaucet funding attempt %d failed for %s: %v", prefix, attempt+1, address, err)
+
+		// A session was created and a claim is already queued on the faucet side.
+		// The faucet processes that claim server-side regardless of whether we keep
+		// polling, so starting a new session here would broadcast a SECOND payout
+		// (duplicate funding). Re-poll the existing session instead of re-funding.
+		if result != nil && result.Session != "" {
+			logger.Warnf("%sFaucet session %s already in flight for %s; re-polling instead of starting a new session to avoid duplicate funding", prefix, result.Session, address)
+
+			confirmed, confErr := c.waitForConfirmation(ctx, result.Session, opts, logCtx)
+			if confErr == nil {
+				result.Success = true
+				result.Confirmed = true
+				result.Status = confirmed.Status
+				if confirmed.ClaimStatus != nil {
+					result.ClaimStatus = *confirmed.ClaimStatus
+				}
+				if confirmed.ClaimBlock != nil {
+					result.ClaimBlock = *confirmed.ClaimBlock
+				}
+				if confirmed.ClaimHash != nil {
+					result.ClaimHash = *confirmed.ClaimHash
+				}
+				result.Error = nil
+				return result, nil
+			}
+
+			lastErr = confErr
+			return lastResult, fmt.Errorf("faucet session %s in flight, not retried to avoid duplicate funding: %w", result.Session, lastErr)
+		}
 	}
 
 	return lastResult, fmt.Errorf("failed after %d attempts: %w", totalAttempts, lastErr)
