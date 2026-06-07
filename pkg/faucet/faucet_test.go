@@ -2,8 +2,14 @@ package faucet
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/zama-ai/blockchain-wallet-exporter/pkg/logger"
 )
 
 // TestAdaptivePolling tests that poll interval adapts based on confirmation timeout
@@ -191,5 +197,128 @@ func TestContextAwareMethodsExist(t *testing.T) {
 	t.Run("Verify interface compatibility", func(t *testing.T) {
 		// Verify that Client implements the Fauceter interface with new methods
 		var _ Fauceter = client
+	})
+}
+
+// idempotencyFaucetStub emulates the relevant subset of the POWFaucet HTTP API
+// for the retry-idempotency tests. It counts startSession calls and lets the
+// test control when (or whether) the session reaches a terminal claim status.
+type idempotencyFaucetStub struct {
+	startSessionCalls int32
+	statusPolls       int32
+	// pollsUntilTerminal: number of getSessionStatus polls that report the
+	// in-progress "claiming/queue" state before reporting the terminal state.
+	pollsUntilTerminal int32
+	// terminalClaimStatus is the claimStatus reported once the in-progress
+	// polls are exhausted ("confirmed" for success, "failed" for failure).
+	terminalClaimStatus string
+}
+
+func (s *idempotencyFaucetStub) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/startSession":
+			atomic.AddInt32(&s.startSessionCalls, 1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"session": "session-fixed-id",
+				"status":  "claimable",
+				"balance": "0",
+				"target":  "0xabc",
+			})
+		case "/api/claimReward":
+			// Mirrors createSessionClaim: session moves to claiming/queue.
+			queue := "queue"
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"session":     "session-fixed-id",
+				"status":      "claiming",
+				"claimStatus": queue,
+			})
+		case "/api/getSessionStatus":
+			poll := atomic.AddInt32(&s.statusPolls, 1)
+			if poll <= s.pollsUntilTerminal {
+				queue := "queue"
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"session":     "session-fixed-id",
+					"status":      "claiming",
+					"claimStatus": queue,
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"session":     "session-fixed-id",
+				"status":      "finished",
+				"claimStatus": s.terminalClaimStatus,
+				"claimHash":   "0xdeadbeef",
+				"claimBlock":  1,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}
+}
+
+// TestRetryDoesNotStartSecondSession is the regression test for the duplicate
+// auto-refund payout bug. When the first in-call confirmation poll times out,
+// the retry loop must re-poll the EXISTING session rather than starting a new
+// one (which would broadcast a second payout on the faucet side).
+func TestRetryDoesNotStartSecondSession(t *testing.T) {
+	_ = logger.InitLogger()
+
+	t.Run("confirmation eventually succeeds on re-poll", func(t *testing.T) {
+		stub := &idempotencyFaucetStub{
+			// First waitForConfirmation (inside the funding call) keeps seeing
+			// claiming/queue and times out; the retry path's re-poll then sees
+			// the terminal confirmed state.
+			pollsUntilTerminal:  2,
+			terminalClaimStatus: "confirmed",
+		}
+		server := httptest.NewServer(stub.handler())
+		defer server.Close()
+
+		client := NewClient(server.URL, 5*time.Second)
+		opts := DefaultFundingOptions()
+		opts.WaitForConfirmation = true
+		opts.ConfirmationTimeout = 50 * time.Millisecond
+		opts.PollInterval = 10 * time.Millisecond
+		opts.MaxRetries = 3
+
+		result, err := client.FundAccountWithRetriesAndOptions(context.Background(), "0xabc", 1.0, opts)
+		if err != nil {
+			t.Fatalf("expected funding to succeed via re-poll, got error: %v", err)
+		}
+		if !result.Success || !result.Confirmed {
+			t.Fatalf("expected success+confirmed, got success=%v confirmed=%v", result.Success, result.Confirmed)
+		}
+		if got := atomic.LoadInt32(&stub.startSessionCalls); got != 1 {
+			t.Fatalf("startSession must be called exactly once to avoid duplicate funding, got %d", got)
+		}
+	})
+
+	t.Run("claim fails after timeout - still only one session", func(t *testing.T) {
+		stub := &idempotencyFaucetStub{
+			pollsUntilTerminal:  2,
+			terminalClaimStatus: "failed",
+		}
+		server := httptest.NewServer(stub.handler())
+		defer server.Close()
+
+		client := NewClient(server.URL, 5*time.Second)
+		opts := DefaultFundingOptions()
+		opts.WaitForConfirmation = true
+		opts.ConfirmationTimeout = 50 * time.Millisecond
+		opts.PollInterval = 10 * time.Millisecond
+		opts.MaxRetries = 3
+
+		result, err := client.FundAccountWithRetriesAndOptions(context.Background(), "0xabc", 1.0, opts)
+		if err == nil {
+			t.Fatal("expected error when claim ultimately fails")
+		}
+		if result != nil && result.Success {
+			t.Fatal("result must not report success when the claim failed")
+		}
+		if got := atomic.LoadInt32(&stub.startSessionCalls); got != 1 {
+			t.Fatalf("startSession must be called exactly once even on failure, got %d", got)
+		}
 	})
 }
